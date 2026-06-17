@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""
+Full Pipeline
+
+Performs:
+  - 2D pose estimation on left and right image + OOD detection
+  - 3D triangulation
+  - 3D motion prediction from estimated poses + OOD detection
+"""
+
+import os
+import argparse
+from time import time
+import numpy as np
+import torch
+from tqdm import tqdm
+import cloudpickle
+import jax.numpy as jnp
+from PIL import Image
+
+from conformal_human_motion_prediction.utils.visualization import plot_ood_score_histogram
+from ultralytics import YOLO
+from conformal_human_motion_prediction.motion_prediction.inference_helper import run_motion_prediction
+from conformal_human_motion_prediction.utils.eval_utils import (
+    compute_sara_predictions,
+    evaluate_pose_prediction_scores_np,
+    evaluate_uncertainty_coverage_with_covariance,
+    print_coverage_stats,
+    print_mpjpe_results,
+    print_motion_validity_stats,
+    print_ood_score_percentiles,
+    print_simple_coverage_stats_sara,
+    save_coverage_stats,
+    save_coverage_stats_sara,
+    save_motion_validity_stats,
+    save_mpjpe_results,
+    save_ood_score_percentiles,
+    simple_coverage_stats_sara
+)
+from conformal_human_motion_prediction.datasets.h36m import SPLIT, Human36mDatasetTwoCameras
+from conformal_human_motion_prediction.datasets.human_rgbd import HumanRGBDDataset
+from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions
+from conformal_human_motion_prediction.pose_estimation.inference_helper import (
+    initialize_jax_models,
+    initialize_human_detector,
+)
+from conformal_human_motion_prediction.pose_estimation.inference_helper_batched import (
+    process_frame_3d_from_rgbd_yolo,
+    process_pose_output,
+)
+from conformal_human_motion_prediction.pose_estimation.triangulation_helper import (
+    load_camera_parameters
+)
+
+from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
+    MIRROR_13_JOINT_MODEL_MAP,
+    YOLO_CONFIDENCE_THRESHOLD,
+    OOD_THRESHOLD as POSE_OOD_THRESHOLD,
+)
+from conformal_human_motion_prediction.motion_prediction.rgbd_yolo_settings import (
+    INPUT_HORIZON_LENGTH,
+    PREDICTION_HORIZON_LENGTH,
+    N_JOINTS,
+    OOD_THRESHOLD as MOTION_OOD_THRESHOLD,
+    N_CORRECT_POSES_REQUIRED,
+    COV_CALIBRATION_CT,
+    COV_CALIBRATION_IT,
+    COV_CALIBRATION_FACTORS,
+    SARA_MEASUREMENT_UNCERTAINTY,
+    SET_LIKELIHOOD
+)
+
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+
+
+def main():
+    """
+    Main function for running 3D pose estimation on the Human3.6M dataset.
+    JAX version of Marian's main function.
+    """
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='3D Pose Estimation with OOD Detection')
+    parser.add_argument('--cache_dir', type=str, default='cache/', help='Cache directory with score functions')
+    parser.add_argument('--data_path', type=str, default='datasets/rgbd_test/', help='Path to datasets')
+    parser.add_argument("--yolo_model", type=str, default="yolo26n-pose.pt",
+                        help="YOLO model name (e.g., yolo11n-pose.pt, yolo26n-pose.pt)")
+    parser.add_argument('--motion_model_save_path', type=str, default='models/motion_prediction/final_model/dct_pose_transformer.pickle', help='Path to saved motion model')
+    parser.add_argument('--pose_run_name', type=str, default='jax_resnet50_regressflow', help='Pose model run name')
+    parser.add_argument('--pose_base_key', type=str, default=None, help='Base key for loading the pose estimation OOD score functions')
+    parser.add_argument('--motion_score_fn_path', type=str, default='models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM1440of1600_sketch_srft_seed0_size20000.cloudpickle', help="Path to the OOD score function for the motion prediction.")
+    parser.add_argument('--start_at', type=int, default=0, help='Start at this frame index.')
+    parser.add_argument('--max_frames', type=int, default=10000000000, help='Maximum number of frames to process')
+    parser.add_argument('--subsample', type=int, default=1, help='Subsampling of frames to match training camera frequency. Default 1 = no subsampling.')
+    parser.add_argument('--enable_ood', action='store_true', help='Enable OOD detection')
+    parser.add_argument('--enable_tracking', action='store_true', help='Enable YOLO tracking')
+    parser.add_argument('--depth_uncertainty', type=float, default=0.002,
+                        help='Assumed depth std-dev in metres for uncertainty propagation')
+    parser.add_argument('--output_dir', type=str, default='results/eval_full_pipeline_rgbd_yolo', help='Output directory for results')
+    parser.add_argument('--n_correct_poses_required', type=int, default=N_CORRECT_POSES_REQUIRED, help='Number of correct poses required in the buffer before predicting motion')
+    parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda or cpu)')
+
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("Full Pipeline - JAX Implementation")
+    print("=" * 60)
+
+    # Configuration
+    device = args.device
+
+    # Initialize models
+    print("\nInitializing models...")
+
+    # Initialize YOLO pose estimation model with uncertainty estimation
+    print("\nInitializing YOLO pose model...")
+    yolo_model = YOLO(args.yolo_model)
+
+    if device == 'cuda':
+        yolo_model.to('cuda')
+        print(f"Model loaded on CUDA (GPU: {torch.cuda.get_device_name(0)})")
+    else:
+        print("Model loaded on CPU")
+
+    # Initialize JAX motion prediction model
+    motion_model_path = os.path.join(root_dir, args.motion_model_save_path)
+    motion_prediction_jit_fn, motion_prediction_params, motion_prediction_batch_stats = \
+        initialize_jax_models(motion_model_path)
+
+    print("Models initialized successfully!")
+
+    # Load score functions
+    print("\nLoading OOD score functions...")
+    pose_ood_score_fn = None
+    motion_ood_score_fn = None
+    if args.enable_ood:
+        if args.pose_base_key is None:
+            print("\nWARNING: OOD detection enabled but no base_key provided. Skipping OOD detection.")
+            print("Use --base_key to specify the cache key for OOD score functions.")
+        else:
+            print(f"\nLoading OOD score functions with cache key: {args.pose_base_key}")
+            pose_ood_score_fn, _, _, _ = load_score_functions(args.cache_dir, args.pose_base_key)
+            print("OOD score functions loaded successfully!")
+            print(f"Using OOD threshold: {args.ood_threshold:.6f}")
+
+        if not os.path.exists(args.motion_score_fn_path):
+            raise FileNotFoundError(
+                f"Motion model score functions file not found: {args.motion_score_fn_path}\n"
+                f"Please run score_model.py first to generate the score functions."
+            )
+        with open(args.motion_score_fn_path, 'rb') as f:
+            motion_score_data = cloudpickle.load(f)
+            motion_ood_score_fn = motion_score_data['score_fun']
+
+    # Create dataset
+    print("\nLoading RGB-D dataset...")
+    data_path = args.data_path or os.path.join(root_dir, "datasets", "rgbd_test")
+
+    dataset = HumanRGBDDataset(
+        base_directory=data_path,
+    )
+
+    if len(dataset) == 0:
+        print("No data found. Please check the dataset path and camera IDs.")
+        return
+
+    start_at = args.start_at
+    max_frames = args.max_frames
+    # Process a limited number of frames for testing
+    frames_to_process = min(len(dataset) - start_at, max_frames)
+    subsample = args.subsample
+    print(f"Dataset loaded with {len(dataset)} frames, from which we are using {frames_to_process} frames \
+            with {subsample} subsampling.")
+
+    # Get a sample from the dataset
+    poses_3d_estimated = []
+    poses_3d_cov_estimated = []
+    poses_3d_gt = []
+    poses_3d_ood_scores = []
+    poses_3d_is_ood = []
+    poses_3d_human_detected = []
+    motions_predicted = []
+    motions_cov_predicted = []
+    motions_set_radius = []
+    motions_gt = []
+    motions_ood_scores = []
+    motions_is_ood = []
+    motions_is_valid = []
+    motions_frame_ids = []
+    motions_cov_predicted_uncalibrated = []
+    pose_buffers_good = []
+
+    points_3d_buffer = jnp.zeros([INPUT_HORIZON_LENGTH, N_JOINTS, 3])
+    covariance_buffer = jnp.zeros([INPUT_HORIZON_LENGTH, N_JOINTS, 3, 3])
+    pose_valid_buffer = jnp.zeros([INPUT_HORIZON_LENGTH])
+
+    motion_prediction_buffer = jnp.zeros([PREDICTION_HORIZON_LENGTH, N_JOINTS, 3])
+    motion_uncertainty_buffer = jnp.zeros([PREDICTION_HORIZON_LENGTH, N_JOINTS, 3, 3])
+
+    # Iterate through frames in a batched manner
+    frame_counter = 0
+    # Subsample every second frame to match motion prediction frequency.
+    for frame_idx in tqdm(range(start_at, start_at + frames_to_process, subsample), "Evaluating sequence:"):
+        sample = dataset[frame_idx]
+        image_pil = sample['color_raw']
+        depth_img = sample['depth_raw']
+        # Could be moved outside the frame loop
+        subject = sample['filename']
+        camera_intrinsics = sample['camera_intrinsics']
+
+        # Create a batch out of single instances
+        rgb_batch = [image_pil]
+        depth_batch = [depth_img]
+        R_rect_to_world = sample['R_rect_to_world']  # (3, 3) numpy array
+        t_rect_to_world = sample['t_rect_to_world']  # (3,) numpy array
+
+        t3 = time()
+        points_3d, C_3d_all, pose_ood_score, pose_is_ood, human_detected, _, _, _ = \
+            process_frame_3d_from_rgbd_yolo(
+                rgb_frames=rgb_batch,
+                depth_frames=depth_batch,
+                camera_intrinsics=camera_intrinsics,
+                yolo_pose_model=yolo_model,
+                mirror_map=MIRROR_13_JOINT_MODEL_MAP,
+                enable_tracking=args.enable_tracking,
+                confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
+                verbose=False,
+                device=device,
+                depth_uncertainty=args.depth_uncertainty,
+                R_rect_to_world=R_rect_to_world,
+                t_rect_to_world=t_rect_to_world,
+            )
+        t4 = time()
+        # print(f"Time for batch processing: {t4 - t3:.3f}s")
+
+        is_valid = (not bool(pose_is_ood)) and bool(human_detected)
+
+        # Unbatch, compute validity, update pose buffers
+        points_3d_buffer, covariance_buffer, pose_valid_buffer, pose_buffer_good = \
+            process_pose_output(
+                points_3d=points_3d,
+                C_3d_all=C_3d_all,
+                is_valid=is_valid,
+                points_3d_buffer=points_3d_buffer,
+                covariance_buffer=covariance_buffer,
+                pose_valid_buffer=pose_valid_buffer,
+                motion_prediction_buffer=motion_prediction_buffer,
+                motion_uncertainty_buffer=motion_uncertainty_buffer,
+            )
+        pose_is_ood = bool(pose_is_ood)
+        human_detected = bool(human_detected)
+
+        # We don't have GT poses so we use the predictions for the motion prediction.
+        points_3d = points_3d[0]
+        C_3d_all = C_3d_all[0]
+        gt_pose = points_3d
+
+        # Store pose estimations
+        poses_3d_estimated.append(points_3d)
+        poses_3d_cov_estimated.append(C_3d_all)
+        if is_valid:
+            poses_3d_gt.append(gt_pose)
+        else:
+            poses_3d_gt.append(torch.zeros_like(gt_pose))
+        poses_3d_ood_scores.append(pose_ood_score)
+        poses_3d_is_ood.append(pose_is_ood)
+        poses_3d_human_detected.append(human_detected)
+
+        # If enough datapoints, predict motion
+        if frame_counter >= INPUT_HORIZON_LENGTH - 1 and \
+           frame_counter < frames_to_process - PREDICTION_HORIZON_LENGTH and \
+           pose_buffer_good:
+            motion_prediction_buffer, motion_uncertainty_buffer, motion_prediction_set_radius, \
+                motion_ood_score, motion_is_ood, valid_motion, \
+                motion_predicted, motion_cov_calibrated, motion_cov_uncalibrated = run_motion_prediction(
+                    points_3d_buffer=points_3d_buffer,
+                    covariance_buffer=covariance_buffer,
+                    pose_valid_buffer=pose_valid_buffer,
+                    motion_prediction_buffer=motion_prediction_buffer,
+                    motion_uncertainty_buffer=motion_uncertainty_buffer,
+                    motion_prediction_jit_fn=motion_prediction_jit_fn,
+                    motion_prediction_params=motion_prediction_params,
+                    motion_prediction_batch_stats=motion_prediction_batch_stats,
+                    motion_ood_score_fn=motion_ood_score_fn,
+                    n_joints=N_JOINTS,
+                    input_horizon_length=INPUT_HORIZON_LENGTH,
+                    prediction_horizon_length=PREDICTION_HORIZON_LENGTH,
+                    ood_threshold=MOTION_OOD_THRESHOLD,
+                    calibration_ct=COV_CALIBRATION_CT,
+                    calibration_it=COV_CALIBRATION_IT,
+                    calibration_factors=COV_CALIBRATION_FACTORS,
+                    n_correct_poses_required=args.n_correct_poses_required,
+                    set_likelihood=SET_LIKELIHOOD,
+                )
+            motions_cov_predicted_uncalibrated.append(motion_cov_uncalibrated)
+            motions_frame_ids.append(frame_counter)
+            # Store motion predictions (raw model output, not the buffer)
+            motions_predicted.append(motion_predicted)
+            motions_cov_predicted.append(motion_cov_calibrated)
+            motions_set_radius.append(motion_prediction_set_radius)
+            motions_ood_scores.append(motion_ood_score)
+            motions_is_ood.append(motion_is_ood)
+            motions_is_valid.append(valid_motion)
+            pose_buffers_good.append(pose_buffer_good)
+        else:
+            motion_prediction_buffer = jnp.zeros([PREDICTION_HORIZON_LENGTH, N_JOINTS, 3])
+            motion_uncertainty_buffer = jnp.zeros([PREDICTION_HORIZON_LENGTH, N_JOINTS, 3, 3])
+
+        frame_counter += 1
+
+        # Remove GPU tensors to free memory
+        # del points_3d, C_3d_all, ood_score, is_ood
+
+    # Fill motions GT
+    last_poses = []
+    for frame_id in motions_frame_ids:
+        motions_gt.append(torch.stack(poses_3d_gt[frame_id + 1 : frame_id + PREDICTION_HORIZON_LENGTH + 1], dim=0))
+        last_poses.append(poses_3d_estimated[frame_id])
+
+    # Convert to numpy arrays
+    num_frames = sum(poses_3d_gt)
+    print("Full pipeline completed!")
+    print(f"Processed {num_frames} frames")
+
+    poses_3d_estimated = torch.stack(poses_3d_estimated, dim=0)
+    poses_3d_cov_estimated = torch.stack(poses_3d_cov_estimated, dim=0)
+    poses_3d_gt = torch.stack(poses_3d_gt, dim=0)
+    poses_3d_ood_scores = torch.stack(poses_3d_ood_scores, dim=0)
+    motions_predicted = jnp.stack(motions_predicted, axis=0)
+    motions_set_radius = jnp.stack(motions_set_radius, axis=0)
+    motions_cov_predicted = jnp.stack(motions_cov_predicted, axis=0)
+    motions_gt = torch.stack(motions_gt, dim=0)
+    last_poses = torch.stack(last_poses, dim=0)
+
+    # Move to cpu and numpy
+    poses_3d_estimated_np = poses_3d_estimated.cpu().numpy()
+    poses_3d_cov_estimated_np = poses_3d_cov_estimated.cpu().numpy()
+    poses_3d_gt_np = poses_3d_gt.cpu().numpy()
+    poses_3d_ood_scores_np = poses_3d_ood_scores.cpu().numpy()
+    poses_3d_is_ood = np.array(poses_3d_is_ood)
+    poses_3d_human_detected = np.array(poses_3d_human_detected)
+    motions_predicted_np = np.array(motions_predicted)
+    motions_set_radius_np = np.array(motions_set_radius)
+    motions_cov_predicted_np = np.array(motions_cov_predicted)
+    motions_gt_np = motions_gt.cpu().numpy()
+    last_poses_np = last_poses.cpu().numpy()
+    motions_ood_scores = np.array(motions_ood_scores)
+    motions_is_ood = np.array(motions_is_ood)
+    motions_is_valid = np.array(motions_is_valid)
+    pose_buffers_good = np.array(pose_buffers_good)
+    motions_cov_predicted_uncalibrated_np = np.array(motions_cov_predicted_uncalibrated)
+
+    # Save motion prediction results for covariance tuning (same format as motion_prediction.py)
+    os.makedirs(args.output_dir, exist_ok=True)
+    results_cloudpickle_file = os.path.join(args.output_dir, "motion_prediction_results.cloudpickle")
+    motion_prediction_results = {
+        'predictions': motions_predicted_np,
+        'targets': motions_gt_np,
+        'covariance_matrices': motions_cov_predicted_uncalibrated_np,
+        'ood_scores': motions_ood_scores,
+        'is_oods': motions_is_ood,
+        'last_input_poses': last_poses_np
+    }
+    with open(results_cloudpickle_file, 'wb') as f:
+        cloudpickle.dump(motion_prediction_results, f)
+    print(f"Saved motion prediction results to {results_cloudpickle_file}")
+
+    # Save all raw results to pickle for further analysis
+    full_results_pickle_file = os.path.join(args.output_dir, "full_pipeline_results.cloudpickle")
+    full_pipeline_results = {
+        'poses_3d_estimated': poses_3d_estimated_np,
+        'poses_3d_cov_estimated': poses_3d_cov_estimated_np,
+        'poses_3d_gt': poses_3d_gt_np,
+        'poses_3d_ood_scores': poses_3d_ood_scores_np,
+        'poses_3d_is_ood': poses_3d_is_ood,
+        'poses_3d_human_detected': poses_3d_human_detected,
+        'motions_predicted': motions_predicted_np,
+        'motions_set_radius': motions_set_radius_np,
+        'motions_cov_predicted': motions_cov_predicted_np,
+        'motions_gt': motions_gt_np,
+        'motions_ood_scores': motions_ood_scores,
+        'motions_is_ood': motions_is_ood,
+        'motions_is_valid': motions_is_valid,
+        'pose_buffers_good': pose_buffers_good,
+    }
+    with open(full_results_pickle_file, 'wb') as f:
+        cloudpickle.dump(full_pipeline_results, f)
+    print(f"Saved full pipeline results to {full_results_pickle_file}")
+
+    # Evaluate 3D pose estimation MPJPE and coverage
+    # print("================================")
+    # print("Evaluating 3D pose estimation.")
+    # print("================================")
+    # N = poses_3d_estimated_np.shape[0]
+    # # Convert to [B, T, J, 3] for eval
+    # poses_3d_estimated_np = poses_3d_estimated_np.reshape([N, 1, N_JOINTS, 3])
+    # poses_3d_cov_estimated_np = poses_3d_cov_estimated_np.reshape([N, 1, N_JOINTS, 3, 3])
+    # poses_3d_gt_np = poses_3d_gt_np.reshape([N, 1, N_JOINTS, 3])
+    # mpjpe, std, per_time_errors, per_time_std, per_joint_errors, per_joint_std = evaluate_pose_prediction_scores_np(
+    #     predictions=poses_3d_estimated_np,
+    #     targets=poses_3d_gt_np,
+    # )
+    # coverage_stats, _ = evaluate_uncertainty_coverage_with_covariance(
+    #     pred_poses=poses_3d_estimated_np,
+    #     true_poses=poses_3d_gt_np,
+    #     cov_matrices=poses_3d_cov_estimated_np
+    # )
+    # print_mpjpe_results(mpjpe, per_time_errors, per_joint_errors)
+    # save_mpjpe_results(mpjpe, per_time_errors, per_joint_errors)
+    # print_coverage_stats(coverage_stats)
+    # save_coverage_stats(coverage_stats)
+
+    # Evalute motion prediction MPJPE and coverage
+    print("================================")
+    print("Evaluating motion prediction.")
+    print("================================")
+    mpjpe, std, per_time_errors, per_time_std, per_joint_errors, per_joint_std = evaluate_pose_prediction_scores_np(
+        predictions=motions_predicted_np,
+        targets=motions_gt_np,
+    )
+    print("================================")
+    print("Evaluating motion uncertainty prediction.")
+    print("================================")
+    coverage_stats, _ = evaluate_uncertainty_coverage_with_covariance(
+        pred_poses=motions_predicted_np,
+        true_poses=motions_gt_np,
+        cov_matrices=motions_cov_predicted_np
+    )
+    print_mpjpe_results(mpjpe, per_time_errors, per_joint_errors)
+    save_mpjpe_results(mpjpe, per_time_errors, per_joint_errors, output_dir=args.output_dir)
+    print_coverage_stats(coverage_stats)
+    save_coverage_stats(coverage_stats, output_dir=args.output_dir)
+
+    coverage_stats_predictions, _ = simple_coverage_stats_sara(
+        predictions=motions_predicted_np,
+        radius=motions_set_radius_np,
+        targets=motions_gt_np,
+    )
+    print(f"Predicted spherical reachable set coverage stats for {SET_LIKELIHOOD} likelihood:")
+    print_simple_coverage_stats_sara(coverage_stats_predictions)
+    save_coverage_stats_sara(coverage_stats_predictions, filename="sara_coverage_predictions", output_dir=args.output_dir)
+
+    print("================================")
+    print("Evaluating motion SARA uncertainty.")
+    print("================================")
+    dt = 1.0 / 30.0
+    prediction_horizon_times = [(t + 1) * dt for t in range(PREDICTION_HORIZON_LENGTH)]
+
+    # Evaluate SARA-style
+    sara_predictions, sara_radius = compute_sara_predictions(
+        last_input_poses=last_poses_np,
+        prediction_horizon_times=prediction_horizon_times,
+        v_human=1.6,
+        measurement_uncertainty=SARA_MEASUREMENT_UNCERTAINTY
+    )
+    coverage_stats_sara, _ = simple_coverage_stats_sara(
+        predictions=sara_predictions,
+        radius=sara_radius,
+        targets=motions_gt_np,
+    )
+    print("SARA simple velocity model coverage stats:")
+    print_simple_coverage_stats_sara(coverage_stats_sara)
+    save_coverage_stats_sara(coverage_stats_sara, filename="sara_coverage_sara", output_dir=args.output_dir)
+
+    # Print OOD statistics if enabled
+    os.makedirs(args.output_dir, exist_ok=True)
+    # plot_ood_score_histogram(
+    #     scores=poses_3d_ood_scores_np,
+    #     threshold=POSE_OOD_THRESHOLD,
+    #     title='2D Pose Prediction OOD Score Distribution',
+    #     xlabel='OOD Score',
+    #     save_path=os.path.join(args.output_dir, 'ood_histogram_pose_prediction.png'),
+    # )
+    plot_ood_score_histogram(
+        scores=motions_ood_scores,
+        threshold=MOTION_OOD_THRESHOLD,
+        title='Motion Prediction OOD Score Distribution',
+        xlabel='OOD Score',
+        save_path=os.path.join(args.output_dir, 'ood_histogram_motion_prediction.png'),
+    )
+
+    # OOD score percentiles
+    print_ood_score_percentiles(motions_ood_scores, label="motion prediction OOD scores")
+    save_ood_score_percentiles(
+        motions_ood_scores,
+        label="motion_ood_scores",
+        output_dir=args.output_dir,
+    )
+    print_motion_validity_stats(motions_is_valid, motions_is_ood, pose_buffers_good)
+    save_motion_validity_stats(motions_is_valid, motions_is_ood, pose_buffers_good, output_dir=args.output_dir)
+
+
+if __name__ == "__main__":
+    main()

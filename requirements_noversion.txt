@@ -1,0 +1,28 @@
+tree_math
+matfree
+optax==0.2.5  # 0.2.2
+matplotlib
+numpy==1.26.3
+flax==0.11.0  # 0.8.4
+scipy
+urllib3
+scikit-learn
+pandas
+tqdm
+seaborn
+# Additional packages for human pose estimation
+opencv-python~=4.10
+einops
+h5py
+easydict
+imageio
+filterpy
+Pillow
+spacepy
+ultralytics
+wandb
+empy
+catkin_pkg
+lark
+lap
+zstandard

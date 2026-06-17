@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conformal_human_motion_prediction"
+version = "0.1.0"
+description = "Conformal human motion prediction with sketched-Lanczos OOD scoring for pose and motion models."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Jakob Thumm"},
+]
+dependencies = [
+    "jax>=0.4.0",
+    "jaxlib>=0.4.0",
+    "flax>=0.8.0",
+    "optax>=0.2.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.13.0",
+    "pandas>=1.5.0",
+    "tqdm>=4.65.0",
+    "pillow>=10.0.0",
+    "opencv-python>=4.10.0",
+    "einops",
+    "h5py",
+    "imageio",
+    "filterpy",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "easydict>=1.10",
+    "spacepy>=0.7.0",
+    "zstandard>=0.25.0",
+    "cloudpickle",
+    # YOLO pose head with per-keypoint uncertainty outputs (Pose26). Installed from the
+    # custom fork instead of the PyPI release; see README "Setup".
+    "ultralytics @ git+https://github.com/JakobThumm/ultralytics.git@pose-uncertainty-head",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "wandb>=0.16.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 120
+target-version = ['py312']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"

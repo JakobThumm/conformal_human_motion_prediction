@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual envs
+/virtualenv
+.venv/
+venv/
+
+# Editor / workspace
+*.code-workspace
+.vscode/settings.json
+
+# Experiment outputs
+/logs/
+/figures/
+/results/
+/runs/
+/visualizations/
+wandb/
+cache/
+*.png
+
+# Model checkpoints (artifacts) — keep the README + download script, ignore the weights
+/models/*
+!/models/README.md
+*.pt
+*.pth
+*.pickle
+*.cloudpickle
+
+# Datasets (artifacts) — keep the README, ignore the data
+/datasets/*
+!/datasets/README.md
+
+# ROS2 build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Vendored ultralytics dev checkout (installed via pyproject git dependency)
+/ultralytics/
+
+# Legacy / personal (not part of this repo)
+marian_code/
