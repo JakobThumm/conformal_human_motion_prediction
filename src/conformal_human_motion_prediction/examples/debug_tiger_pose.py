@@ -26,7 +26,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     YOLO_IMAGE_SIZE
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 
 def transform_tiger_image_for_human_detection(image_pil, target_size=YOLO_IMAGE_SIZE):

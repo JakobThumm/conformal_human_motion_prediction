@@ -50,7 +50,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     OOD_THRESHOLD as POSE_OOD_THRESHOLD,
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 
 def transform_tiger_image_for_human_detection(image_pil, target_size=(256, 256)):
@@ -630,7 +630,7 @@ def create_comparison_visualization(h36m_results, tiger_results, save_path="id_v
 def main():
     """Main function for ID vs OOD pose prediction comparison."""
     parser = argparse.ArgumentParser(description='ID vs OOD Pose Prediction Comparison')
-    parser.add_argument('--cache_dir', type=str, default='cache/', help='Cache directory with score functions')
+    parser.add_argument('--ood_functions_dir', '--cache_dir', dest='ood_functions_dir', type=str, default='models/ood_functions/', help='Directory with OOD score functions (*_score_functions.cloudpickle); --cache_dir is a deprecated alias')
     parser.add_argument('--pose_model_save_path', type=str, default='models/pose_estimation', help='Path to saved pose model')
     parser.add_argument('--pose_run_name', type=str, default='jax_resnet50_regressflow', help='Pose model run name')
     parser.add_argument('--pose_base_key', type=str, default='H36M_RegressFlowResNet18_3Joints_n9000_4998731f', help='Cache key for OOD score functions')
@@ -659,7 +659,7 @@ def main():
         print("\nLoading OOD score function...")
         pose_ood_score_fn = None
         if args.pose_base_key is not None:
-            pose_ood_score_fn, _, _, _ = load_score_functions(args.cache_dir, args.pose_base_key)
+            pose_ood_score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, args.pose_base_key)
             print(f"OOD score function loaded (key: {args.pose_base_key})")
             print(f"Using OOD threshold: {POSE_OOD_THRESHOLD:.6f}")
 

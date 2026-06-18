@@ -55,7 +55,7 @@ from conformal_human_motion_prediction.utils.eval_utils import evaluate_pose_pre
 # Much slower and does not make a difference (at least for stage 1)
 # jax.config.update("jax_enable_x64", True)
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 
 def merge_params(source_params, target_params, verbose=True):

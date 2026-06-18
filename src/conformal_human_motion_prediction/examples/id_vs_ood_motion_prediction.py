@@ -31,7 +31,7 @@ from conformal_human_motion_prediction.utils.visualization import visualize_moti
 from conformal_human_motion_prediction.pose_estimation.h36m_settings import CONNECTIONS_13
 from conformal_human_motion_prediction.motion_prediction.h36m_settings import REDUCED_JOINT_INDICES, PREDICTION_HORIZON_LENGTH, REDUCED_TIMESTEP
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 N_JOINTS = 13
 OUTPUT_DIM = 9  # 3 joints * 3 coordinates

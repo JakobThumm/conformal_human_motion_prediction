@@ -29,7 +29,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     MIRROR_13_JOINT_MODEL_MAP
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 
 def rotate_image_batch_gpu(images: torch.Tensor, angle: float = -90) -> torch.Tensor:

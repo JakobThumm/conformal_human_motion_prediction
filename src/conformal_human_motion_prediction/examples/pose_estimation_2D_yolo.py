@@ -35,7 +35,7 @@ COVERAGES = [0.6800, 0.9500, 0.9973, 0.9999]
 N_RLE_SAMPLES = 100000
 
 # Add parent directory to path
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 sys.path.insert(0, root_dir)
 # The ultralytics/ subfolder is a namespace package (no __init__.py at repo root level),
 # which shadows the editable install when running from this directory.

@@ -16,6 +16,7 @@ einops
 h5py
 easydict
 imageio
+decord
 filterpy
 Pillow
 spacepy

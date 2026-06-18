@@ -49,7 +49,7 @@ except ImportError:
     print("=" * 80)
 
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 # Dataset splits
 SPLIT = {

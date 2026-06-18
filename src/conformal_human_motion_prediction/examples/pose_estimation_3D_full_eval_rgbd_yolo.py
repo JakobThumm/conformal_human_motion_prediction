@@ -48,7 +48,7 @@ from conformal_human_motion_prediction.datasets.h36m import Human36mDatasetGTPos
 from conformal_human_motion_prediction.pose_estimation.triangulation_helper import load_camera_parameters
 
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 

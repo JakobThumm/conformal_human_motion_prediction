@@ -32,7 +32,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     OOD_THRESHOLD
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 # Camera IDs for stereo setup
 CAMERA_IDS = ['55011271', '60457274']
@@ -312,10 +312,11 @@ def main():
         help='Enable OOD detection'
     )
     parser.add_argument(
-        '--cache_dir',
+        '--ood_functions_dir', '--cache_dir',
+        dest='ood_functions_dir',
         type=str,
-        default='cache/',
-        help='Cache directory with score functions'
+        default='models/ood_functions/',
+        help='Directory with OOD score functions; --cache_dir is a deprecated alias'
     )
     parser.add_argument(
         '--base_key',
@@ -365,7 +366,7 @@ def main():
         else:
             from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions
             print(f"\nLoading OOD score functions with cache key: {args.base_key}")
-            score_fn, _, _, _ = load_score_functions(args.cache_dir, args.base_key)
+            score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, args.base_key)
             print("OOD score functions loaded successfully!")
 
     # Load camera parameters

@@ -19,8 +19,6 @@ dependencies = [
     "numpy>=1.24.0",
     "scipy>=1.10.0",
     "scikit-learn>=1.3.0",
-    # Matrix-free Lanczos (decomp.tridiag_sym); API is version-sensitive, pinned to the
-    # version the OOD scoring code was developed against (matches the original unc/ venv).
     "matfree==0.4.0",
     "matplotlib>=3.7.0",
     "seaborn>=0.13.0",
@@ -31,6 +29,7 @@ dependencies = [
     "einops",
     "h5py",
     "imageio",
+    "decord",
     "filterpy",
     "torch>=2.0.0",
     "torchvision>=0.15.0",

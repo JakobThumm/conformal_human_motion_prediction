@@ -41,7 +41,7 @@ from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
 )
 from conformal_human_motion_prediction.utils.eval_utils import evaluate_pose_prediction_scores_np as evaluate_scores
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 BATCH_SIZE = 16
 FPS = 25.0

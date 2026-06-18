@@ -59,7 +59,7 @@ H36M_IMAGE_SIZE = (1000, 1000)
 
 _DEFAULT_CAMERA_PARAMS_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    '../../models/pose_estimation/H36M/RegressFlow/seed_420/camera-parameters.json',
+    '../../../models/pose_estimation/H36M/RegressFlow/seed_420/camera-parameters.json',
 )
 
 transform = transforms.Compose([

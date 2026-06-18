@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from conformal_human_motion_prediction.models.regressflow import RegressFlowFlax
 
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 
 def _to_cpu_np(t):

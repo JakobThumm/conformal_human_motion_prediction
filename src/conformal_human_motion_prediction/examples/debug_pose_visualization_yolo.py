@@ -38,7 +38,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
 
 
 # Add parent directory to path
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 sys.path.insert(0, root_dir)
 
 

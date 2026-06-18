@@ -4,7 +4,7 @@ import os
 
 RESULTS_BASE_DIR = os.path.join(
     os.path.dirname(__file__),
-    "../../results/final/full_pipeline",
+    "../../../results/final/full_pipeline",
 )
 OUTPUT_PATH = os.path.join(RESULTS_BASE_DIR, "full_pipeline_results.tex")
 SENTENCE_OUTPUT_PATH = os.path.join(RESULTS_BASE_DIR, "full_pipeline_sentence.tex")

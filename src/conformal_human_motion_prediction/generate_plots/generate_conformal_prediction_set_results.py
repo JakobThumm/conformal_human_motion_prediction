@@ -3,7 +3,7 @@ import os
 
 RESULTS_DIR = os.path.join(
     os.path.dirname(__file__),
-    "../../results/final/motion_prediction/no_uncertainty_no_ood",
+    "../../../results/final/motion_prediction/no_uncertainty_no_ood",
 )
 CSV_PATH_CONFORMAL = os.path.join(RESULTS_DIR, "coverage_stats_conformal_prediction_sets.csv")
 CSV_PATH_SARA = os.path.join(RESULTS_DIR, "coverage_stats_sara.csv")

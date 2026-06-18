@@ -70,7 +70,7 @@ from conformal_human_motion_prediction.motion_prediction.rgbd_yolo_settings impo
     SET_LIKELIHOOD
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 
 def main():
@@ -80,7 +80,7 @@ def main():
     """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='3D Pose Estimation with OOD Detection')
-    parser.add_argument('--cache_dir', type=str, default='cache/', help='Cache directory with score functions')
+    parser.add_argument('--ood_functions_dir', '--cache_dir', dest='ood_functions_dir', type=str, default='models/ood_functions/', help='Directory with OOD score functions (*_score_functions.cloudpickle); --cache_dir is a deprecated alias')
     parser.add_argument('--data_path', type=str, default='datasets/rgbd_test/', help='Path to datasets')
     parser.add_argument("--yolo_model", type=str, default="yolo26n-pose.pt",
                         help="YOLO model name (e.g., yolo11n-pose.pt, yolo26n-pose.pt)")
@@ -138,7 +138,7 @@ def main():
             print("Use --base_key to specify the cache key for OOD score functions.")
         else:
             print(f"\nLoading OOD score functions with cache key: {args.pose_base_key}")
-            pose_ood_score_fn, _, _, _ = load_score_functions(args.cache_dir, args.pose_base_key)
+            pose_ood_score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, args.pose_base_key)
             print("OOD score functions loaded successfully!")
             print(f"Using OOD threshold: {args.ood_threshold:.6f}")
 

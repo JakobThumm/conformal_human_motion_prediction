@@ -26,7 +26,7 @@ from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
 
 jax.config.update("jax_enable_x64", True)
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 BATCH_SIZE = 128
 

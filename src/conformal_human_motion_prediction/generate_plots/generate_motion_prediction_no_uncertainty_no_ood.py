@@ -3,7 +3,7 @@ import os
 
 RESULTS_DIR = os.path.join(
     os.path.dirname(__file__),
-    "../../results/final/motion_prediction",
+    "../../../results/final/motion_prediction",
 )
 CSV_PATH_STAGE1 = os.path.join(
     RESULTS_DIR, "stage_1_no_uncertainty_no_ood", "per_time_mpjpe_results_test.csv"

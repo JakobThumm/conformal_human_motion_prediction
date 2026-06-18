@@ -79,8 +79,16 @@ class Human36mPreprocessedDataset(Dataset):
                     print(f"Warning: Pose file not found for {img_file}")
                     continue
 
-                # Load sequence to count frames
-                images = np.load(img_path, mmap_mode='r')  # Memory-mapped for efficiency
+                # Load sequence to count frames (memory-mapped for efficiency).
+                # Skip empty/truncated/corrupt .npy files instead of crashing the whole loader.
+                if os.path.getsize(img_path) == 0:
+                    print(f"Warning: Skipping empty image file {img_path}")
+                    continue
+                try:
+                    images = np.load(img_path, mmap_mode='r')
+                except (EOFError, ValueError, OSError) as e:
+                    print(f"Warning: Skipping unreadable image file {img_path}: {e}")
+                    continue
                 num_frames = len(images)
 
                 # Add each frame as a separate sample

@@ -17,7 +17,7 @@ from conformal_human_motion_prediction.models.dct_pose_transformer_pytorch_attn 
 
 jax.config.update("jax_enable_x64", True)
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 
 def _to_cpu_np(t):

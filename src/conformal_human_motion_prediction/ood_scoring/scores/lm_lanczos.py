@@ -13,6 +13,7 @@ import time
 import os
 import sys
 import cloudpickle
+import pickle
 import hashlib
 
 # Compatibility shim: cloudpickle files saved with NumPy 2.x reference numpy._core
@@ -27,6 +28,44 @@ for _attr in dir(_np_core):
     _sub = getattr(_np_core, _attr, None)
     if _sub is not None and isinstance(_sub, type(_np_core)):
         sys.modules.setdefault(f'numpy._core.{_attr}', _sub)
+
+
+# Compatibility: legacy OOD caches were pickled in the old repo, where this code lived under the
+# `src.*` / `human_pose_pipeline.*` namespaces. Remap those module paths to the new package so
+# existing *.cloudpickle files still load. jax internals (`jax._src.*`) are untouched -- none of
+# the prefixes below match them.
+_LEGACY_MODULE_RENAMES = {
+    "src.ood_scores": "conformal_human_motion_prediction.ood_scoring.scores",
+    "src.lanczos": "conformal_human_motion_prediction.ood_scoring.lanczos",
+    "src.sketches": "conformal_human_motion_prediction.ood_scoring.sketches",
+    "src.autodiff": "conformal_human_motion_prediction.ood_scoring.autodiff",
+    "src.estimators": "conformal_human_motion_prediction.ood_scoring.estimators",
+    "src.training.losses": "conformal_human_motion_prediction.ood_scoring.losses",
+    "src.training": "conformal_human_motion_prediction.ood_scoring",
+    "src.datasets": "conformal_human_motion_prediction.datasets",
+    "src.models": "conformal_human_motion_prediction.models",
+    "human_pose_pipeline.evaluation.pose_metrics": "conformal_human_motion_prediction.utils.pose_metrics",
+    "human_pose_pipeline": "conformal_human_motion_prediction",
+}
+
+
+def _remap_legacy_module(module):
+    """Translate an old-repo module path to its new location (longest prefix wins)."""
+    for old in sorted(_LEGACY_MODULE_RENAMES, key=len, reverse=True):
+        if module == old or module.startswith(old + "."):
+            return _LEGACY_MODULE_RENAMES[old] + module[len(old):]
+    return module
+
+
+class _LegacyCompatUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        return super().find_class(_remap_legacy_module(module), name)
+
+
+def _compat_load(cache_path):
+    """cloudpickle.load with legacy module-path remapping for old-repo caches."""
+    with open(cache_path, 'rb') as f:
+        return _LegacyCompatUnpickler(f).load()
 
 
 def _get_cache_base_key(args_dict, trainset_size, n_params):
@@ -79,8 +118,7 @@ def _load_ggn_vector_product(cache_dir, base_key):
     if not os.path.exists(cache_path):
         raise FileNotFoundError(f"GGN cache file not found: {cache_path}")
 
-    with open(cache_path, 'rb') as f:
-        cache_data = cloudpickle.load(f)
+    cache_data = _compat_load(cache_path)
 
     print(f"Loaded GGN vector product from {cache_path}")
     return cache_data['ggn_vector_product']
@@ -114,8 +152,7 @@ def _load_sketch_op(cache_dir, base_key):
     if not os.path.exists(cache_path):
         raise FileNotFoundError(f"Sketch cache file not found: {cache_path}")
 
-    with open(cache_path, 'rb') as f:
-        cache_data = cloudpickle.load(f)
+    cache_data = _compat_load(cache_path)
 
     print(f"Loaded sketch operator from {cache_path}")
     return cache_data['sketch_op']
@@ -147,17 +184,16 @@ def _load_eigenpairs(cache_dir, base_key):
     if not os.path.exists(cache_path):
         raise FileNotFoundError(f"Eigenpairs cache file not found: {cache_path}")
 
-    with open(cache_path, 'rb') as f:
-        cache_data = cloudpickle.load(f)
+    cache_data = _compat_load(cache_path)
 
     print(f"Loaded eigenpairs from {cache_path}")
     return cache_data['eigenvec'], cache_data['eigenval']
 
 
-def _save_score_functions(cache_dir, base_key, score_fun, eigenval, approx_quadratic_form, quadratic_form, args_dict):
+def _save_score_functions(ood_functions_dir, base_key, score_fun, eigenval, approx_quadratic_form, quadratic_form, args_dict):
     """Save score functions and eigenvalues"""
-    os.makedirs(cache_dir, exist_ok=True)
-    cache_path = os.path.join(cache_dir, f"{base_key}_score_functions.cloudpickle")
+    os.makedirs(ood_functions_dir, exist_ok=True)
+    cache_path = os.path.join(ood_functions_dir, f"{base_key}_score_functions.cloudpickle")
 
     cache_data = {
         'score_fun': score_fun,
@@ -176,15 +212,14 @@ def _save_score_functions(cache_dir, base_key, score_fun, eigenval, approx_quadr
     print(f"Saved score functions to {cache_path}")
 
 
-def load_score_functions(cache_dir, base_key):
-    """Load score functions and eigenvalues from cache"""
-    cache_path = os.path.join(cache_dir, f"{base_key}_score_functions.cloudpickle")
+def load_score_functions(ood_functions_dir, base_key):
+    """Load score functions and eigenvalues from the OOD functions directory"""
+    cache_path = os.path.join(ood_functions_dir, f"{base_key}_score_functions.cloudpickle")
 
     if not os.path.exists(cache_path):
         raise FileNotFoundError(f"Score functions cache file not found: {cache_path}")
 
-    with open(cache_path, 'rb') as f:
-        cache_data = cloudpickle.load(f)
+    cache_data = _compat_load(cache_path)
 
     print(f"Loaded score functions from {cache_path}")
     return (

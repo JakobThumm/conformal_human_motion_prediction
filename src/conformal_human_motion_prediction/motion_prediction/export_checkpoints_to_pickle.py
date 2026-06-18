@@ -9,7 +9,7 @@ import orbax.checkpoint
 
 from train_motion_prediction_model import TrainingConfig
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 
 def load_checkpoint_params(

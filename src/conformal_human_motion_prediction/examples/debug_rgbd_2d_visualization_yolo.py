@@ -46,7 +46,7 @@ from conformal_human_motion_prediction.datasets.human_rgbd import HumanRGBDDatas
 
 
 # Add project root to path
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 

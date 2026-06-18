@@ -48,7 +48,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     OOD_THRESHOLD,
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
@@ -80,8 +80,9 @@ def main():
                         help='Enable OOD detection; requires --base_key')
     parser.add_argument('--base_key', type=str, default=None,
                         help='Cache key for OOD score functions')
-    parser.add_argument('--cache_dir', type=str, default='cache/',
-                        help='Cache directory for OOD score functions')
+    parser.add_argument('--ood_functions_dir', '--cache_dir', dest='ood_functions_dir',
+                        type=str, default='models/ood_functions/',
+                        help='Directory with OOD score functions; --cache_dir is a deprecated alias')
     parser.add_argument('--ood_threshold', type=float, default=OOD_THRESHOLD)
     parser.add_argument('--output_dir', type=str,
                         default='results/pose_3d_stereo_const_depth',
@@ -119,7 +120,7 @@ def main():
             print("WARNING: --enable_ood set but --base_key not provided; OOD disabled.")
         else:
             print(f"Loading OOD score functions (key={args.base_key}) ...")
-            score_fn, _, _, _ = load_score_functions(args.cache_dir, args.base_key)
+            score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, args.base_key)
             print(f"OOD threshold: {args.ood_threshold:.6f}")
 
     # ------------------------------------------------------------------

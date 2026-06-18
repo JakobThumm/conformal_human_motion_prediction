@@ -47,7 +47,7 @@ from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
 
 # Get the root directory of the uncertainty_quantification project
 # This script should be run from the uncertainty_quantification root
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 BATCH_SIZE = 64  # Using the same batch size as PyTorch script for consistency
 

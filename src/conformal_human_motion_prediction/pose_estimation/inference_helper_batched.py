@@ -154,7 +154,7 @@ def pose_estimation_2d(
 
         # Get results (these are now instant since both are done)
         pred_joints_13, uncertainties_13, covariance_13 = pose_future.result()
-        ood_score = float(np.asarray(ood_future.result()))
+        ood_score = float(np.asarray(ood_future.result()).ravel()[0])
     else:
         pred_joints_13, uncertainties_13, covariance_13 = predict_pose(bounding_box_image, pose_estimation_jit_fn, params, batch_stats, num_output_joints, device=device)
         jax_image = jnp.asarray(bounding_box_image) if isinstance(bounding_box_image, torch.Tensor) else bounding_box_image

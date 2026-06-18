@@ -34,7 +34,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     YOLO_CONFIDENCE_THRESHOLD
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 
 def evaluate_pose_estimation_full(ground_truth, estimated_pose, estimated_uncertainty, estimated_covariance):

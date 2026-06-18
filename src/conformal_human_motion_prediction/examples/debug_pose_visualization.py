@@ -39,7 +39,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     YOLO_CONFIDENCE_THRESHOLD
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 
 def load_single_sample(base_directory, subject='S1', action='Directions', camera='55011271', frame_idx=100):

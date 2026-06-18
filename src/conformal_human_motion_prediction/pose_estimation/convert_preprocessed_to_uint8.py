@@ -84,7 +84,7 @@ def main():
     preprocessed_dir = args.preprocessed_dir
     if not os.path.isabs(preprocessed_dir):
         preprocessed_dir = os.path.join(
-            os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')),
             preprocessed_dir
         )
 

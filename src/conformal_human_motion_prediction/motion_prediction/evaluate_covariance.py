@@ -11,7 +11,7 @@ from conformal_human_motion_prediction.motion_prediction.inference_helper import
 from conformal_human_motion_prediction.utils.eval_utils import compute_sara_predictions, convert_covariance_matrices_to_set, evaluate_uncertainty_coverage_with_covariance, print_coverage_stats, print_simple_coverage_stats_sara, save_coverage_stats_sara, simple_coverage_stats_sara
 
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 
 def main():

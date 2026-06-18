@@ -147,7 +147,12 @@ parser.add_argument("--test_score", action="store_true", required=False, default
 
 # caching intermediate computations
 parser.add_argument(
-    "--cache_dir", type=str, default=None, help="If set, save newly computed elements to this directory"
+    "--cache_dir", type=str, default=None,
+    help="If set, save/load recomputable intermediates (ggn/sketch/eigenpairs) in this directory",
+)
+parser.add_argument(
+    "--ood_functions_dir", type=str, default="models/ood_functions/",
+    help="Directory for the final OOD score functions (*_score_functions.cloudpickle)",
 )
 parser.add_argument(
     "--load_ggn_vector_product",
@@ -362,7 +367,7 @@ if __name__ == "__main__":
     def try_load_score_functions():
         """Try to load score functions from cache, return (success, score_fun, eigenval, approx_qf, qf)"""
         load_in_score_functions = args_dict.get("load_score_functions", False)
-        if not (load_in_score_functions and args_dict.get("cache_dir")):
+        if not (load_in_score_functions and args_dict.get("ood_functions_dir")):
             return False, None, None, None, None
 
         try:
@@ -372,7 +377,7 @@ if __name__ == "__main__":
             base_key = _get_cache_base_key(args_dict, trainset_size, n_params)
 
             score_fun, eigenval, approx_quadratic_form, quadratic_form = load_score_functions(
-                args_dict["cache_dir"], base_key
+                args_dict["ood_functions_dir"], base_key
             )
             print("Successfully loaded score functions from cache - skipping building phase!")
             return True, score_fun, eigenval, approx_quadratic_form, quadratic_form
@@ -471,10 +476,10 @@ if __name__ == "__main__":
                         model, params_dict, train_loader, args_dict, use_eigenvals=args_dict["use_eigenvals"]
                     )
 
-        # Save score functions if cache_dir is specified and we just computed them
+        # Save score functions to the OOD functions dir if we just computed them
         def save_score_functions_if_enabled():
-            """Save score functions to cache if enabled"""
-            if not args_dict.get("cache_dir"):
+            """Save score functions to the OOD functions directory if enabled"""
+            if not args_dict.get("ood_functions_dir"):
                 return
 
             try:
@@ -484,7 +489,7 @@ if __name__ == "__main__":
                 n_params = compute_num_params(params_dict["params"])
                 base_key = _get_cache_base_key(args_dict, trainset_size, n_params)
                 _save_score_functions(
-                    args_dict["cache_dir"],
+                    args_dict["ood_functions_dir"],
                     base_key,
                     score_fun,
                     eigenval,

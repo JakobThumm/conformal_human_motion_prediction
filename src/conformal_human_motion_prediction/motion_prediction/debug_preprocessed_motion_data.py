@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 from conformal_human_motion_prediction.pose_estimation.h36m_settings import JOINT_IDX_17, JOINT_IDX_13
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 # Dataset splits
 SPLIT = {

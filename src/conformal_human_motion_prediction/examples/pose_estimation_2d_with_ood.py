@@ -36,7 +36,7 @@ from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
     YOLO_CONFIDENCE_THRESHOLD
 )
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
 
 def compute_mahalanobis_distance(ground_truth, estimated_pose, estimated_uncertainty, estimated_covariance):
@@ -379,7 +379,7 @@ def create_evaluation_plots(h36m_results, ood_threshold, save_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='2D Pose Estimation with OOD Detection')
-    parser.add_argument('--cache_dir', type=str, default='cache/', help='Cache directory with score functions')
+    parser.add_argument('--ood_functions_dir', '--cache_dir', dest='ood_functions_dir', type=str, default='models/ood_functions/', help='Directory with OOD score functions (*_score_functions.cloudpickle); --cache_dir is a deprecated alias')
     parser.add_argument('--base_key', type=str, default='H36M_RegressFlow_n9000_f3c4d885', help='Base key for loading the score functions')
     parser.add_argument('--data_path', type=str, default='datasets/', help='Path to datasets')
     parser.add_argument('--model_save_path', type=str, default='models/pose_estimation', help='Path to saved models')
@@ -407,7 +407,7 @@ def main():
     base_key = args.base_key
 
     print(f"Loading score functions with cache key: {base_key}")
-    score_fn, _, _, _ = load_score_functions(args.cache_dir, base_key)
+    score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, base_key)
     print("Score functions loaded successfully!")
     print(f"Using OOD threshold: {args.ood_threshold:.6f}")
 

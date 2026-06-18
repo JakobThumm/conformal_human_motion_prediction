@@ -149,10 +149,10 @@ def pose_estimation_2d(
 
             # Get results (these are now instant since both are done)
             pred_joints_13, uncertainties_13, covariance_13 = pose_future.result()
-            ood_score = float(np.asarray(ood_future.result()))
+            ood_score = float(np.asarray(ood_future.result()).ravel()[0])
         else:
             pred_joints_13, uncertainties_13, covariance_13 = predict_pose(bounding_box_image, pose_estimation_jit_fn, params, batch_stats, num_output_joints)
-            ood_score = float(np.asarray(score_fn(bounding_box_image)))
+            ood_score = float(np.asarray(score_fn(bounding_box_image)).ravel()[0])
         is_ood = ood_score > ood_threshold
 
         # Transform back to original image space
@@ -623,7 +623,7 @@ def _import_yolo():
     """
     import sys
     import os
-    _root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    _root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
     _saved = sys.path[:]
     sys.path = [p for p in sys.path if os.path.normpath(p) != _root]
     try:
