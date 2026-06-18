@@ -37,6 +37,28 @@ python3 -m pip install -e .
 python3 -c "import ultralytics; print(ultralytics.__version__)"
 ```
 
+### GPU (CUDA) setup
+
+The base install pulls a CPU build of JAX. For GPU, install the `cuda` extra and a CUDA-matched
+PyTorch build:
+
+```bash
+# CUDA 12 JAX plugin (+ bundled CUDA/cuDNN wheels)
+python3 -m pip install -e ".[cuda]"
+
+# PyTorch must match your NVIDIA driver. Plain `pip install torch` may pull a cu130 wheel that
+# needs a CUDA-13 driver; install from the index matching your driver instead, e.g. cu128:
+python3 -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
+```
+
+On newer GPUs (RTX 50xx / Blackwell, sm_120) XLA needs a recent `ptxas` (CUDA ≥ 12.9, PTX ISA
+≥ 8.7); an older system `/usr/bin/ptxas` triggers `PTX version 8.0 does not support target
+'sm_120a'`. The `nvidia-cuda-nvcc-cu12` wheel ships a new-enough ptxas, but it must win over the
+system one on `PATH`. This repo's venv carries a startup shim
+(`<site-packages>/_cuda_ptxas_shim.{py,pth}`) that prepends the bundled ptxas automatically. The
+shim is not managed by pip — if you rebuild the venv, recreate it (or just
+`export PATH=<site-packages>/nvidia/cuda_nvcc/bin:$PATH` before running).
+
 Then fetch data and checkpoints:
 
 - **Datasets**: see [`datasets/README.md`](datasets/README.md) (H36M is license-restricted; the

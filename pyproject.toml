@@ -18,6 +18,10 @@ dependencies = [
     "optax>=0.2.0",
     "numpy>=1.24.0",
     "scipy>=1.10.0",
+    "scikit-learn>=1.3.0",
+    # Matrix-free Lanczos (decomp.tridiag_sym); API is version-sensitive, pinned to the
+    # version the OOD scoring code was developed against (matches the original unc/ venv).
+    "matfree==0.4.0",
     "matplotlib>=3.7.0",
     "seaborn>=0.13.0",
     "pandas>=1.5.0",
@@ -45,6 +49,14 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
     "wandb>=0.16.0",
+]
+# GPU support: pulls the CUDA 12 jaxlib plugin + bundled CUDA/cuDNN wheels.
+# Install with `pip install -e ".[cuda]"`. NOTE: on newer GPUs (e.g. RTX 50xx /
+# Blackwell, sm_120) the bundled ptxas (CUDA 12.9) must win over any older system
+# ptxas in PATH — the venv ships a sitecustomize.py shim that prepends it; see
+# README "Setup" if you recreate the venv.
+cuda = [
+    "jax[cuda12]>=0.4.0",
 ]
 
 [tool.setuptools.packages.find]
