@@ -37,6 +37,8 @@ dependencies = [
     "spacepy>=0.7.0",
     "zstandard>=0.25.0",
     "cloudpickle",
+    # Model checkpoint hosting/fetching (scripts/upload_models.py, scripts/download_models.py).
+    "huggingface_hub>=0.23.0",
     # YOLO pose head with per-keypoint uncertainty outputs (Pose26). Installed from the
     # custom fork instead of the PyPI release; see README "Setup".
     "ultralytics @ git+https://github.com/JakobThumm/ultralytics.git@pose-uncertainty-head",
@@ -48,6 +50,8 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
     "wandb>=0.16.0",
+    # Optional: hyperparameter search for motion training (--use_optuna). Training works without it.
+    "optuna>=3.0.0",
 ]
 # GPU support: pulls the CUDA 12 jaxlib plugin + bundled CUDA/cuDNN wheels.
 # Install with `pip install -e ".[cuda]"`. NOTE: on newer GPUs (e.g. RTX 50xx /

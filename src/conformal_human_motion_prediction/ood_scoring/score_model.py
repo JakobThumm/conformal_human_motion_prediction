@@ -23,7 +23,7 @@ from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import (
     low_memory_lanczos_score_fun,
     _get_cache_base_key,
     _save_score_functions,
-    load_score_functions,
+    load_score_functions_from_path,
 )
 from conformal_human_motion_prediction.ood_scoring.scores.projected_ensemble import projected_ensemble_score_fun
 from conformal_human_motion_prediction.ood_scoring.scores.max_logit import max_logit_score_fun
@@ -181,6 +181,15 @@ parser.add_argument(
     required=False,
     default=False,
     help="Load all score functions from cache, skipping entire building phase",
+)
+parser.add_argument(
+    "--score_fn_output_path",
+    type=str,
+    default=None,
+    help=(
+        "Direct path for saving/loading the score-function cloudpickle. "
+        "Defaults to {ood_functions_dir}/{run_name}_score_fn.cloudpickle"
+    ),
 )
 # layer selection
 parser.add_argument(
@@ -364,22 +373,24 @@ if __name__ == "__main__":
             print(f"No sketch_padding value given. Computed the optimal one: {args_dict['sketch_padding']}")
 
     # Helper function to try loading score functions from cache
+    def _get_score_fn_path():
+        """Return the effective score-function output/input path."""
+        if args_dict.get("score_fn_output_path"):
+            return args_dict["score_fn_output_path"]
+        ood_dir = args_dict.get("ood_functions_dir", "models/ood_functions/")
+        run_name = args_dict.get("run_name", "unknown")
+        return os.path.join(ood_dir, f"{run_name}_score_fn.cloudpickle")
+
     def try_load_score_functions():
         """Try to load score functions from cache, return (success, score_fun, eigenval, approx_qf, qf)"""
-        load_in_score_functions = args_dict.get("load_score_functions", False)
-        if not (load_in_score_functions and args_dict.get("ood_functions_dir")):
+        if not args_dict.get("load_score_functions", False):
             return False, None, None, None, None
 
+        score_fn_path = _get_score_fn_path()
         try:
-            print("Loading score functions from cache...")
-            trainset_size = int(0.9 * args_dict["subsample_trainset"]) if args_dict.get("subsample_trainset") else None
-            n_params = compute_num_params(params_dict["params"])
-            base_key = _get_cache_base_key(args_dict, trainset_size, n_params)
-
-            score_fun, eigenval, approx_quadratic_form, quadratic_form = load_score_functions(
-                args_dict["ood_functions_dir"], base_key
-            )
-            print("Successfully loaded score functions from cache - skipping building phase!")
+            print(f"Loading score functions from {score_fn_path}...")
+            score_fun, eigenval, approx_quadratic_form, quadratic_form = load_score_functions_from_path(score_fn_path)
+            print("Successfully loaded score functions - skipping building phase!")
             return True, score_fun, eigenval, approx_quadratic_form, quadratic_form
         except FileNotFoundError as e:
             print(f"Failed to load score functions: {e}")
@@ -476,29 +487,14 @@ if __name__ == "__main__":
                         model, params_dict, train_loader, args_dict, use_eigenvals=args_dict["use_eigenvals"]
                     )
 
-        # Save score functions to the OOD functions dir if we just computed them
+        # Save score functions to a single slim cloudpickle
         def save_score_functions_if_enabled():
-            """Save score functions to the OOD functions directory if enabled"""
-            if not args_dict.get("ood_functions_dir"):
-                return
-
+            """Save score functions to a slim cloudpickle (score_fun + eigenval + args_dict)."""
+            score_fn_path = _get_score_fn_path()
             try:
-                trainset_size = (
-                    int(0.9 * args_dict["subsample_trainset"]) if args_dict.get("subsample_trainset") else None
-                )
-                n_params = compute_num_params(params_dict["params"])
-                base_key = _get_cache_base_key(args_dict, trainset_size, n_params)
-                _save_score_functions(
-                    args_dict["ood_functions_dir"],
-                    base_key,
-                    score_fun,
-                    eigenval,
-                    approx_quadratic_form,
-                    quadratic_form,
-                    args_dict,
-                )
+                _save_score_functions(score_fn_path, score_fun, eigenval, args_dict)
             except Exception as e:
-                print(f"Warning: Failed to save score functions to cache: {e}")
+                print(f"Warning: Failed to save score functions: {e}")
 
         save_score_functions_if_enabled()
     if args.verbose:
@@ -551,52 +547,3 @@ if __name__ == "__main__":
                 if compute_true_quadratic_form:
                     scores_dict[f"{distribution}_QF"] = jnp.concatenate(scores_dict[f"{distribution}_QF"], axis=0)
 
-    ###################
-    ### save scores ###
-    experiment_name = f"scores_"
-    if args.subsample_trainset is not None:
-        experiment_name += f"subsample{args.subsample_trainset}_"
-
-    if args.score == "max_logit":
-        experiment_name += "max_logit"
-    elif args.score == "ensemble":
-        experiment_name += f"ensemble_size{args.ensemble_size}"
-    elif args.score == "projected_ensemble":
-        experiment_name += f"projected_ensemble_size{args.ensemble_size}_epoch{args.n_epochs_projected_ensemble}"
-        if args.use_proj_loss:
-            experiment_name += "_loss"
-    elif args.score == "diagonal_lla":
-        experiment_name += f"diagonal_lla_sample{args.hutchinson_samples}"
-    elif args.score == "scod":
-        experiment_name += f"scod_HMsize{args.n_eigenvec_hm}"
-    elif args.score == "swag":
-        experiment_name += f"swag_vec{args.swag_n_vec}_mom{args.swag_momentum}_collect{args.swag_collect_interval}"
-        if args.swag_diag_only:
-            experiment_name += "_diag"
-    else:
-        if args.use_eigenvals:
-            experiment_name += "eig_"
-        if args.use_hessian:
-            experiment_name += "hess_"
-        # lanczos params
-        experiment_name += f"lanczos_seed{args.lanczos_seed}_size_HM{args.n_eigenvec_hm}of{args.lanczos_hm_iter}_LM{args.n_eigenvec_lm}of{args.lanczos_lm_iter}"
-        # sketch params
-        if args.sketch is not None:
-            experiment_name += f"_sketch_{args.sketch}_seed{args.sketch_seed}_size{args.sketch_size}"
-    print(f"Saving with name -> {experiment_name}\n\n")
-    if os.path.exists(f"{args.model_save_path}/{args.ID_dataset}/{args.model}/seed_{args.model_seed}"):
-        cloudpickle.dump(
-            scores_dict,
-            open(
-                f"{args.model_save_path}/{args.ID_dataset}/{args.model}/seed_{args.model_seed}/{args.run_name}_{experiment_name}.cloudpickle",
-                "wb",
-            ),
-        )
-    else:
-        cloudpickle.dump(
-            scores_dict,
-            open(
-                f"{args.model_save_path}/{args.run_name}_{experiment_name}.cloudpickle",
-                "wb",
-            ),
-        )

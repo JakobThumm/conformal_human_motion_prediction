@@ -33,7 +33,10 @@ from flax.training.train_state import TrainState
 import orbax.checkpoint
 import numpy as np
 import wandb
-import optuna
+try:
+    import optuna  # only needed for the optional --use_optuna hyperparameter search
+except ImportError:
+    optuna = None
 
 from conformal_human_motion_prediction.models.dct_pose_transformer_pytorch_attn import (
     DCTPoseTransformer,
@@ -1054,7 +1057,7 @@ def train_stage(
     lr_fn,
     start_epoch: int = 0,
     verify_freezing: bool = False,
-    trial: Optional[optuna.Trial] = None,
+    trial: "Optional[optuna.Trial]" = None,
 ) -> TrainState:
     """Train a single stage.
 
@@ -1124,7 +1127,7 @@ def train_stage(
     return state
 
 
-def objective(trial: optuna.Trial, base_args) -> float:
+def objective(trial: "optuna.Trial", base_args) -> float:
     """Optuna objective function for hyperparameter optimization.
 
     Args:
@@ -1165,7 +1168,7 @@ def objective(trial: optuna.Trial, base_args) -> float:
         )
 
     # Setup paths
-    model_dir = os.path.join(root_dir, "conformal_human_motion_prediction", "models", "motion_prediction", trial_run_id)
+    model_dir = os.path.join(root_dir, "models", "motion_prediction", trial_run_id)
     checkpoint_dir = os.path.join(model_dir, "checkpoints")
     config_path = os.path.join(model_dir, "dct_pose_transformer_args.json")
 
@@ -1291,6 +1294,8 @@ def main(args):
     """Main training function."""
     # Check if Optuna optimization is enabled
     if args.use_optuna:
+        if optuna is None:
+            raise ImportError("--use_optuna requires optuna. Install it with: pip install optuna")
         print("=" * 80)
         print("Starting Optuna Hyperparameter Optimization")
         print("=" * 80)
@@ -1337,7 +1342,7 @@ def main(args):
         print("=" * 80)
 
         # Save study results
-        study_results_path = os.path.join(root_dir, "conformal_human_motion_prediction", "models", "motion_prediction",
+        study_results_path = os.path.join(root_dir, "models", "motion_prediction",
                                           f"{args.optuna_study_name}_results.json")
         os.makedirs(os.path.dirname(study_results_path), exist_ok=True)
 
@@ -1377,7 +1382,7 @@ def main(args):
             run_id = args.run_id
 
     # Setup paths
-    model_dir = os.path.join(root_dir, "conformal_human_motion_prediction", "models", "motion_prediction", run_id)
+    model_dir = os.path.join(root_dir, "models", "motion_prediction", run_id)
     checkpoint_dir = os.path.join(model_dir, "checkpoints")
     config_path = os.path.join(model_dir, "dct_pose_transformer_args.json")
 

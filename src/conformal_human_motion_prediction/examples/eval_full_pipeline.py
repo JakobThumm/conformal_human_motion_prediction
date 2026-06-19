@@ -35,7 +35,7 @@ from conformal_human_motion_prediction.utils.eval_utils import (
     simple_coverage_stats_sara
 )
 from conformal_human_motion_prediction.datasets.h36m import SPLIT, Human36mDatasetTwoCameras
-from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions
+from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions_from_path
 from conformal_human_motion_prediction.pose_estimation.inference_helper import (
     initialize_jax_models,
     initialize_human_detector,
@@ -76,11 +76,9 @@ def main():
     """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='3D Pose Estimation with OOD Detection')
-    parser.add_argument('--ood_functions_dir', '--cache_dir', dest='ood_functions_dir', type=str, default='models/ood_functions/', help='Directory with OOD score functions (*_score_functions.cloudpickle); --cache_dir is a deprecated alias')
     parser.add_argument('--data_path', type=str, default='datasets/', help='Path to datasets')
-    parser.add_argument('--pose_model_save_path', type=str, default='models/pose_estimation', help='Path to saved pose model')
-    parser.add_argument('--pose_run_name', type=str, default='jax_resnet50_regressflow', help='Pose model run name')
-    parser.add_argument('--pose_base_key', type=str, default=None, help='Base key for loading the pose estimation OOD score functions')
+    parser.add_argument('--pose_model_path', type=str, default='models/pose_estimation/jax_resnet50_regressflow', help='Direct path to the pose model checkpoint base')
+    parser.add_argument('--pose_score_fn_path', type=str, default='models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle', help='Direct path to the pose OOD score functions (.cloudpickle)')
     parser.add_argument('--motion_model_save_path', type=str, default='models/motion_prediction/final_model/dct_pose_transformer.pickle', help='Path to saved motion model')
     parser.add_argument('--motion_score_fn_path', type=str, default='models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM1440of1600_sketch_srft_seed0_size20000.cloudpickle', help="Path to the OOD score function for the motion prediction.")
     parser.add_argument('--subsample', type=int, default=2, help='Subsampling of frames to match training camera frequency. 1 = no subsampling.')
@@ -111,8 +109,7 @@ def main():
     print("\nInitializing models...")
 
     # Initialize JAX pose estimation model with uncertainty estimation
-    pose_models_dir = os.path.join(root_dir, args.pose_model_save_path, "H36M", "RegressFlow", "seed_420")
-    pose_checkpoint_path_jax = os.path.join(pose_models_dir, args.pose_run_name)
+    pose_checkpoint_path_jax = os.path.join(root_dir, args.pose_model_path)
     pose_estimation_jit_fn, pose_estimation_params, pose_estimation_batch_stats = initialize_jax_models(pose_checkpoint_path_jax)
 
     # Initialize JAX motion prediction model
@@ -129,12 +126,12 @@ def main():
     pose_ood_score_fn = None
     motion_ood_score_fn = None
     if args.enable_ood:
-        if args.pose_base_key is None:
-            print("\nWARNING: OOD detection enabled but no base_key provided. Skipping OOD detection.")
-            print("Use --base_key to specify the cache key for OOD score functions.")
+        if not args.pose_score_fn_path:
+            print("\nWARNING: OOD detection enabled but no pose score function path provided. Skipping pose OOD detection.")
+            print("Use --pose_score_fn_path to specify the OOD score functions file.")
         else:
-            print(f"\nLoading OOD score functions with cache key: {args.pose_base_key}")
-            pose_ood_score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, args.pose_base_key)
+            print(f"\nLoading pose OOD score functions from: {args.pose_score_fn_path}")
+            pose_ood_score_fn, _, _, _ = load_score_functions_from_path(args.pose_score_fn_path)
             print("OOD score functions loaded successfully!")
             print(f"Using OOD threshold: {POSE_OOD_THRESHOLD:.6f}")
 
@@ -148,7 +145,7 @@ def main():
             motion_ood_score_fn = motion_score_data['score_fun']
 
     # Load camera parameters
-    camera_parameters_path = os.path.join(pose_models_dir, 'camera-parameters.json')
+    camera_parameters_path = os.path.join(os.path.dirname(pose_checkpoint_path_jax), 'camera-parameters.json')
     if not os.path.exists(camera_parameters_path):
         print(f"Warning: Camera parameters file not found at {camera_parameters_path}")
         print("Please ensure the camera-parameters.json file is available in the models directory")

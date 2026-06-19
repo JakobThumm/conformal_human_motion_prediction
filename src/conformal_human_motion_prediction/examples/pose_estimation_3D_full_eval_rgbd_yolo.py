@@ -93,12 +93,9 @@ def main():
     )
     parser.add_argument('--data_path', type=str, default='datasets/',
                         help='Root path containing H36M/extracted/')
-    parser.add_argument('--model_save_path', type=str,
-                        default='models/pose_estimation',
-                        help='Path to saved models directory (for camera parameters)')
-    parser.add_argument('--camera_params_path', type=str, default=None,
-                        help='Direct path to camera-parameters.json '
-                             '(overrides --model_save_path)')
+    parser.add_argument('--camera_params_path', type=str,
+                        default='models/pose_estimation/camera-parameters.json',
+                        help='Direct path to camera-parameters.json')
     parser.add_argument('--yolo_model', type=str, default='yolo26n-pose.pt',
                         help='YOLO pose model to use '
                              '(e.g. yolo11n/s/m/l/x-pose.pt)')
@@ -146,13 +143,7 @@ def main():
     # ------------------------------------------------------------------
     # Camera parameters path
     # ------------------------------------------------------------------
-    if args.camera_params_path is not None:
-        camera_params_path = args.camera_params_path
-    else:
-        models_dir = os.path.join(
-            root_dir, args.model_save_path, 'H36M', 'RegressFlow', 'seed_420'
-        )
-        camera_params_path = os.path.join(models_dir, 'camera-parameters.json')
+    camera_params_path = os.path.join(root_dir, args.camera_params_path)
 
     if not os.path.exists(camera_params_path):
         print(f"Camera parameters not found: {camera_params_path}")

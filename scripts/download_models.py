@@ -1,87 +1,113 @@
 #!/usr/bin/env python3
-"""Download the model checkpoints required by the pipeline into the ``models/`` folder.
+"""Download the model checkpoints from the Hugging Face Hub into ``models/``.
 
-This is a **placeholder**: fill in ``MODEL_MANIFEST`` below with the real download URLs
-(e.g. a university server, an S3/GCS bucket, or a Hugging Face Hub repo) and, if needed,
-adapt :func:`download_file` to your hosting (auth headers, ``huggingface_hub``, etc.).
-
-Layout this script populates (relative to the repo root)::
+Fetches the artifacts uploaded by ``scripts/upload_models.py`` and restores them to the
+on-disk layout the pipeline expects, then derives the deployable motion models:
 
     models/
-      pose_estimation/H36M/RegressFlow/seed_420/...        # JAX RegressFlow pose nets
-      motion_prediction/final_model/dct_pose_transformer.pickle
-      motion_prediction/final_model_for_ood/<score_fn>.cloudpickle
-      yolo/yolo11n-pose.pt, yolo26n-pose.pt, ...           # YOLO detector/pose weights
+      pose_estimation/                              # JAX RegressFlow nets + camera params
+        jax_resnet*_regressflow*_{args.json,params.pickle}
+        camera-parameters.json
+      motion_prediction/
+        final_training_run/                         # per-stage Orbax checkpoints + exports
+        final_model/                                # built from final stage (full model)
+        final_model_for_ood/                        # built from final stage (reduced output)
+      ood_functions/                                # cached sketched-Lanczos OOD score fns
+        {jax_resnet18_regressflow_3joints,dct_pose_transformer}_score_fn.cloudpickle
 
-Run::
+The two ``final_model*`` folders are NOT downloaded -- they are produced locally by
+``scripts/build_motion_models.py`` from ``final_training_run`` so the reduced-output OOD
+args stay in sync with the code (REDUCED_JOINT_INDICES).
 
-    python scripts/download_models.py            # download everything
-    python scripts/download_models.py --only yolo
+Prerequisites:
+    pip install -e .            # installs huggingface_hub
+    # Public repo: no auth needed. Private repo: `hf auth login` or export HF_TOKEN.
+
+Usage:
+    python scripts/download_models.py                       # everything + build motion models
+    python scripts/download_models.py --only pose_estimation
+    python scripts/download_models.py --no-build            # skip building final_model*
+    python scripts/download_models.py --repo_id you/your-repo
 """
 from __future__ import annotations
 
 import argparse
 import sys
-import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = REPO_ROOT / "models"
 
-# ---------------------------------------------------------------------------
-# TODO: fill in real URLs. Each entry maps a logical group -> list of
-# (url, destination-relative-to-models/) pairs.
-# ---------------------------------------------------------------------------
-MODEL_MANIFEST: dict[str, list[tuple[str, str]]] = {
-    "pose_estimation": [
-        # ("https://YOUR_HOST/regressflow_seed_420.zip",
-        #  "pose_estimation/H36M/RegressFlow/seed_420/regressflow.zip"),
-    ],
-    "motion_prediction": [
-        # ("https://YOUR_HOST/dct_pose_transformer.pickle",
-        #  "motion_prediction/final_model/dct_pose_transformer.pickle"),
-    ],
-    "yolo": [
-        # ("https://YOUR_HOST/yolo26n-pose.pt", "yolo/yolo26n-pose.pt"),
-    ],
+DEFAULT_REPO_ID = "JakobThumm/conformal-human-motion-prediction-models"
+REPO_TYPE = "model"
+
+# Logical group -> glob patterns (relative to the repo root) to fetch for that group.
+DOWNLOAD_GROUPS: dict[str, list[str]] = {
+    "pose_estimation": ["pose_estimation/**"],
+    "motion_prediction": ["motion_prediction/**"],
+    "ood_functions": ["ood_functions/**"],
 }
 
 
-def download_file(url: str, dest: Path) -> None:
-    """Download ``url`` to ``dest`` (override for auth / HF Hub / cloud SDKs)."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  {url}\n    -> {dest}")
-    urllib.request.urlretrieve(url, dest)  # noqa: S310 - trusted, user-configured URLs
+def _build_motion_models() -> None:
+    """Derive final_model/ and final_model_for_ood/ from the downloaded training run."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import build_motion_models  # noqa: E402  (local script, same dir)
+
+    run_dir = MODELS_DIR / "motion_prediction" / "final_training_run"
+    if not (run_dir / "checkpoints").is_dir():
+        print(
+            f"  [skip build] {run_dir}/checkpoints not present "
+            "(download the motion_prediction group to build the deployable models).",
+            file=sys.stderr,
+        )
+        return
+    build_motion_models.build(str(run_dir), str(MODELS_DIR / "motion_prediction"))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--repo_id", default=DEFAULT_REPO_ID, help="Source HF repo id (namespace/name).")
     parser.add_argument(
         "--only",
-        choices=sorted(MODEL_MANIFEST),
+        choices=sorted(DOWNLOAD_GROUPS),
         help="Download only one group (default: all groups).",
     )
+    parser.add_argument(
+        "--no-build",
+        action="store_true",
+        help="Do not build final_model/ and final_model_for_ood/ after downloading.",
+    )
+    parser.add_argument("--token", default=None, help="HF token (defaults to cached login / HF_TOKEN).")
     args = parser.parse_args()
 
-    groups = [args.only] if args.only else list(MODEL_MANIFEST)
-    total = sum(len(MODEL_MANIFEST[g]) for g in groups)
-
-    if total == 0:
+    try:
+        from huggingface_hub import snapshot_download
+    except ModuleNotFoundError:
         print(
-            "No download URLs configured yet.\n"
-            "Edit MODEL_MANIFEST in scripts/download_models.py with the real checkpoint URLs,\n"
-            "then re-run this script. The expected models/ layout is documented in models/README.md.",
+            "huggingface_hub is not installed. Run `pip install -e .` (it is now a dependency) "
+            "or `pip install huggingface_hub`.",
             file=sys.stderr,
         )
-        # Still create the directory skeleton so paths exist.
-        for sub in ("pose_estimation", "motion_prediction", "yolo"):
-            (MODELS_DIR / sub).mkdir(parents=True, exist_ok=True)
         return 1
 
-    for group in groups:
-        print(f"[{group}]")
-        for url, rel_dest in MODEL_MANIFEST[group]:
-            download_file(url, MODELS_DIR / rel_dest)
+    groups = [args.only] if args.only else list(DOWNLOAD_GROUPS)
+    allow = [pat for g in groups for pat in DOWNLOAD_GROUPS[g]]
+    print(f"Downloading from https://huggingface.co/{args.repo_id} -> {MODELS_DIR}/")
+    snapshot_download(
+        repo_id=args.repo_id,
+        repo_type=REPO_TYPE,
+        local_dir=str(MODELS_DIR),
+        allow_patterns=allow,
+        token=args.token,
+    )
+
+    if not args.no_build and ("motion_prediction" in groups):
+        print("Building deployable motion models (final_model/, final_model_for_ood/)...")
+        _build_motion_models()
+
     print("Done.")
     return 0
 

@@ -191,17 +191,16 @@ def main():
         
 
         # Use 3-joint reduced model for faster OOD detection
-        # Change to "finetuned_h36m_regressflow_with_unc" for full 17-joint model
+        # Change to "jax_resnet50_regressflow" for full 17-joint model
         use_3joint_model = False  # Set to False to use full 17-joint model
 
+        models_dir = os.path.join(root_dir, "models/pose_estimation")
         if use_3joint_model:
-            models_dir = os.path.join(root_dir, "models/pose_estimation", "H36M", "RegressFlow_3joints", "seed_420")
-            checkpoint_path_jax = os.path.join(models_dir, "finetuned_h36m_regressflow_pred_3joints")
+            checkpoint_path_jax = os.path.join(models_dir, "jax_resnet18_regressflow_3joints")
             num_output_joints = 3
             print("Using 3-joint reduced model (nose, left wrist, right wrist) for faster inference")
         else:
-            models_dir = os.path.join(root_dir, "models/pose_estimation", "H36M", "RegressFlow", "seed_420")
-            checkpoint_path_jax = os.path.join(models_dir, "finetuned_h36m_regressflow_with_unc")
+            checkpoint_path_jax = os.path.join(models_dir, "jax_resnet50_regressflow")
             num_output_joints = 17
             print("Using full RegressFlowWithAleatoric model for uncertainty estimation")
 

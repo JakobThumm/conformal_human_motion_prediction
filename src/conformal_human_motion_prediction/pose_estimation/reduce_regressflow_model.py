@@ -12,9 +12,9 @@ Joint indices in H36M 17-joint format:
 
 Usage:
     python reduce_regressflow_model.py --model_save_path models/pose_estimation \
-                                       --run_name finetuned_h36m_regressflow_pred \
+                                       --run_name jax_resnet18_regressflow \
                                        --seed 420 \
-                                       --output_run_name finetuned_h36m_regressflow_pred_3joints
+                                       --output_run_name jax_resnet18_regressflow_3joints
 """
 
 import argparse

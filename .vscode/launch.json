@@ -249,7 +249,7 @@
           "--load_ggn",
           "--load_sketch",
           "--load_eigenpairs",
-          "--load_score_functions"
+          // "--load_score_functions"
       ]
     },
     // {
@@ -302,11 +302,9 @@
       "program": "src/conformal_human_motion_prediction/examples/pose_estimation_2d_with_ood.py",
       "console": "integratedTerminal",
       "args": [
-          "--ood_functions_dir", "models/ood_functions/",
-          "--base_key", "H36M_RegressFlowResNet18_3Joints_n9000_4998731f",
+          "--score_fn_path", "models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle",
           "--data_path", "datasets/",
-          "--model_save_path", "models/pose_estimation",
-          "--run_name", "jax_resnet50_regressflow",
+          "--model_path", "models/pose_estimation/jax_resnet50_regressflow",
           "--max_samples", "10000",
           "--output_dir", "results/pose_ood_evaluation",
           "--ood_threshold", "0.05"
@@ -319,11 +317,9 @@
       "program": "src/conformal_human_motion_prediction/examples/pose_estimation_3D.py",
       "console": "integratedTerminal",
       "args": [
-          "--ood_functions_dir", "models/ood_functions/",
-          "--base_key", "H36M_RegressFlowResNet18_3Joints_n9000_4998731f",
+          "--score_fn_path", "models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle",
           "--data_path", "datasets/",
-          "--model_save_path", "models/pose_estimation",
-          "--run_name", "jax_resnet50_regressflow",
+          "--model_path", "models/pose_estimation/jax_resnet50_regressflow",
           "--ood_threshold", "0.05",
           "--subject", "S1",
           "--action", "WalkingDog",
@@ -347,7 +343,7 @@
           "--batch_size", "32",
           "--device", "cuda",
           "--camera_ids", "55011271", "60457274",
-          "--run_name", "jax_resnet50_regressflow",
+          "--model_path", "models/pose_estimation/jax_resnet50_regressflow",
       ]
     },
     {
@@ -360,7 +356,8 @@
           "--data_path", "datasets/",
           "--dataset_name", "Human36mMotionDataset3DWithInputUncertainty",
           "--split", "validation",
-          "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
+          "--model_save_path", "models/motion_prediction/4e8ur8je/checkpoints/stage_4/dct_pose_transformer.pickle",
+          // "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
           // "--enable_ood",
           "--motion_score_fn_path", "models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM1440of1600_sketch_srft_seed0_size20000.cloudpickle"
       ]
@@ -372,9 +369,8 @@
       "program": "src/conformal_human_motion_prediction/examples/eval_full_pipeline.py",
       "console": "integratedTerminal",
       "args": [
-        "--pose_model_save_path", "models/pose_estimation",
-        "--pose_run_name", "jax_resnet50_regressflow",  // "jax_resnet50_regressflow", finetuned_h36m_regressflow_with_unc
-        "--pose_base_key", "H36M_RegressFlowResNet18_3Joints_n9000_4998731f",
+        "--pose_model_path", "models/pose_estimation/jax_resnet50_regressflow",
+        "--pose_score_fn_path", "models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle",
         "--motion_model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
         "--motion_score_fn_path", "models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle",
         "--split", "validation",
@@ -472,9 +468,9 @@
           //"--use_eigenvals",
           //"--prior_std", "0.00000000001",
           "--cache_dir", "cache/",
-          // "--load_ggn",
-          // "--load_sketch",
-          // "--load_eigenpairs",
+          "--load_ggn",
+          "--load_sketch",
+          "--load_eigenpairs",
           // "--load_score_functions"
       ]
     },
@@ -624,7 +620,7 @@
           "--d_model", "128",
           "--nhead", "4",
           "--num_layers", "2",
-          "--init_weights_path", "models/motion_prediction/dct_pose_transformer_transferred.pickle",
+          // "--init_weights_path", "models/motion_prediction/dct_pose_transformer_transferred.pickle",
           "--stage1_epochs", "15",
           "--stage2_epochs", "10",
           "--stage3_epochs", "10",

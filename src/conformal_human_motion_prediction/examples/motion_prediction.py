@@ -59,7 +59,7 @@ def main():
         help="Path to saved models",
     )
     parser.add_argument("--split", type=str, default="validation", help="train, validation, or test")
-    # parser.add_argument('--run_name', type=str, default='finetuned_h36m_regressflow_with_unc', help='Model run name')
+    # parser.add_argument('--run_name', type=str, default='jax_resnet50_regressflow', help='Model run name')
     # parser.add_argument('--ood_threshold', type=float, default=OOD_THRESHOLD, help='OOD threshold')
     # parser.add_argument('--subject', type=str, default='S1', help='Subject ID (e.g., S1, S6)')
     # parser.add_argument('--action', type=str, default='WalkingDog', help='Action to visualize')

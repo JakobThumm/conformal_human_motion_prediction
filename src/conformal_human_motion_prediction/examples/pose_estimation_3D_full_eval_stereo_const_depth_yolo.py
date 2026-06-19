@@ -92,11 +92,9 @@ def main():
     if args.camera_params_path is not None:
         camera_params_path = args.camera_params_path
     else:
-        models_dir = os.path.join(
-            root_dir,
-            'models/pose_estimation/H36M/RegressFlow/seed_420'
+        camera_params_path = os.path.join(
+            root_dir, 'models/pose_estimation', 'camera-parameters.json'
         )
-        camera_params_path = os.path.join(models_dir, 'camera-parameters.json')
 
     if not os.path.exists(camera_params_path):
         print(f"Camera parameters not found: {camera_params_path}")

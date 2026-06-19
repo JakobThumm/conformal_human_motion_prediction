@@ -24,7 +24,7 @@ import jax.numpy as jnp
 from time import time
 
 from conformal_human_motion_prediction.datasets.h36m import Human36mDatasetSequence
-from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions, _get_cache_base_key
+from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions_from_path
 from conformal_human_motion_prediction.models import compute_num_params
 from conformal_human_motion_prediction.pose_estimation.inference_helper import (
     initialize_jax_models,
@@ -379,11 +379,9 @@ def create_evaluation_plots(h36m_results, ood_threshold, save_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='2D Pose Estimation with OOD Detection')
-    parser.add_argument('--ood_functions_dir', '--cache_dir', dest='ood_functions_dir', type=str, default='models/ood_functions/', help='Directory with OOD score functions (*_score_functions.cloudpickle); --cache_dir is a deprecated alias')
-    parser.add_argument('--base_key', type=str, default='H36M_RegressFlow_n9000_f3c4d885', help='Base key for loading the score functions')
+    parser.add_argument('--score_fn_path', type=str, default='models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle', help='Direct path to the OOD score functions (.cloudpickle)')
     parser.add_argument('--data_path', type=str, default='datasets/', help='Path to datasets')
-    parser.add_argument('--model_save_path', type=str, default='models/pose_estimation', help='Path to saved models')
-    parser.add_argument('--run_name', type=str, default='finetuned_h36m_regressflow_pred', help='Model run name')
+    parser.add_argument('--model_path', type=str, default='models/pose_estimation/jax_resnet50_regressflow', help='Direct path to the pose model checkpoint base')
     parser.add_argument('--ood_threshold', type=float, default=0.3, help='OOD threshold')
     parser.add_argument('--max_samples', type=int, default=None, help='Max samples from H36M')
     parser.add_argument('--output_dir', type=str, default='results/pose_ood_evaluation', help='Output directory')
@@ -396,18 +394,15 @@ def main():
 
     # Load models
     print("\n1. Loading models...")
-    models_dir = os.path.join(root_dir, args.model_save_path, "H36M", "RegressFlow", "seed_420")
-    checkpoint_path = os.path.join(models_dir, args.run_name)
+    checkpoint_path = os.path.join(root_dir, args.model_path)
     pose_estimation_jit_fn, params, batch_stats = initialize_jax_models(checkpoint_path)
 
     human_detector, device_torch = initialize_human_detector('cuda')
 
     # Load score functions
     print("\n2. Loading OOD score functions...")
-    base_key = args.base_key
-
-    print(f"Loading score functions with cache key: {base_key}")
-    score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, base_key)
+    print(f"Loading score functions from: {args.score_fn_path}")
+    score_fn, _, _, _ = load_score_functions_from_path(args.score_fn_path)
     print("Score functions loaded successfully!")
     print(f"Using OOD threshold: {args.ood_threshold:.6f}")
 

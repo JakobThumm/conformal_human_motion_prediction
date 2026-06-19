@@ -257,16 +257,10 @@ def main():
         help='Path to save processed motion prediction data'
     )
     parser.add_argument(
-        '--model_save_path',
+        '--model_path',
         type=str,
-        default='models/pose_estimation',
-        help='Path to saved pose estimation models'
-    )
-    parser.add_argument(
-        '--run_name',
-        type=str,
-        default='finetuned_h36m_regressflow_with_unc',
-        help='Model run name'
+        default='models/pose_estimation/jax_resnet50_regressflow',
+        help='Direct path to the pose model checkpoint base'
     )
     parser.add_argument(
         '--split',
@@ -312,17 +306,10 @@ def main():
         help='Enable OOD detection'
     )
     parser.add_argument(
-        '--ood_functions_dir', '--cache_dir',
-        dest='ood_functions_dir',
-        type=str,
-        default='models/ood_functions/',
-        help='Directory with OOD score functions; --cache_dir is a deprecated alias'
-    )
-    parser.add_argument(
-        '--base_key',
+        '--score_fn_path',
         type=str,
         default=None,
-        help='Base key for loading the OOD score functions'
+        help='Direct path to the OOD score functions (.cloudpickle)'
     )
     parser.add_argument(
         '--ood_threshold',
@@ -338,7 +325,7 @@ def main():
     print("=" * 80)
     print(f"Data directory: {args.data_path}")
     print(f"Output directory: {args.output_dir}")
-    print(f"Model: {args.run_name}")
+    print(f"Model: {args.model_path}")
     print(f"Batch size: {args.batch_size}")
     print(f"Device: {args.device}")
     if args.enable_ood:
@@ -347,8 +334,7 @@ def main():
 
     # Initialize models
     print("\nInitializing models...")
-    models_dir = os.path.join(root_dir, args.model_save_path, "H36M", "RegressFlow", "seed_420")
-    checkpoint_path_jax = os.path.join(models_dir, args.run_name)
+    checkpoint_path_jax = os.path.join(root_dir, args.model_path)
 
     pose_estimation_jit_fn, params, batch_stats = initialize_jax_models(checkpoint_path_jax)
     print("Pose estimation model loaded")
@@ -360,17 +346,17 @@ def main():
     # Load OOD score functions if enabled
     score_fn = None
     if args.enable_ood:
-        if args.base_key is None:
-            print("\nWARNING: OOD detection enabled but no base_key provided. Skipping OOD detection.")
-            print("Use --base_key to specify the cache key for OOD score functions.")
+        if not args.score_fn_path:
+            print("\nWARNING: OOD detection enabled but no score function path provided. Skipping OOD detection.")
+            print("Use --score_fn_path to specify the OOD score functions file.")
         else:
-            from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions
-            print(f"\nLoading OOD score functions with cache key: {args.base_key}")
-            score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, args.base_key)
+            from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions_from_path
+            print(f"\nLoading OOD score functions from: {args.score_fn_path}")
+            score_fn, _, _, _ = load_score_functions_from_path(args.score_fn_path)
             print("OOD score functions loaded successfully!")
 
     # Load camera parameters
-    camera_parameters_path = os.path.join(models_dir, 'camera-parameters.json')
+    camera_parameters_path = os.path.join(os.path.dirname(checkpoint_path_jax), 'camera-parameters.json')
     if not os.path.exists(camera_parameters_path):
         raise FileNotFoundError(
             f"Camera parameters file not found at {camera_parameters_path}. "

@@ -215,6 +215,11 @@ def pretrained_model_from_string(
     base_path = f"{save_path}/{dataset_name}/{model_name}/seed_{seed}/"
     args_file_path = f"{base_path}/{run_name}_args.json"
     if not os.path.exists(args_file_path):
+        # Fallback: pose checkpoints are consolidated under a single RegressFlow/ directory,
+        # while model_name (e.g. RegressFlowResNet18_3Joints) is still used for the cache key.
+        base_path = f"{save_path}/{dataset_name}/RegressFlow/seed_{seed}/"
+        args_file_path = f"{base_path}/{run_name}_args.json"
+    if not os.path.exists(args_file_path):
         base_path = save_path
         args_file_path = f"{base_path}/{run_name}_args.json"
         if not os.path.exists(args_file_path):

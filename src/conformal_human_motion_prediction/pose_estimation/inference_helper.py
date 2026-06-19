@@ -562,7 +562,7 @@ def initialize_jax_models(checkpoint_path_jax):
     print(f'Loading JAX model from {checkpoint_path_jax}...')
 
     # Parse the model path to extract components
-    # Expected format: models/pose_estimation/H36M/RegressFlow/seed_420/finetuned_h36m_regressflow_pred_*
+    # Expected format: models/pose_estimation/jax_resnet50_regressflow_*
     path_parts = checkpoint_path_jax.split('/')
 
     # Find the directory containing the model files

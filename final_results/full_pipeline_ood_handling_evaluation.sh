@@ -1,46 +1,24 @@
 #!/bin/bash
-python human_pose_pipeline/examples/eval_full_pipeline.py \
-    --pose_model_save_path "human_pose_pipeline/models/pose_estimation" \
-    --pose_run_name "jax_resnet50_regressflow" \
-    --pose_base_key "H36M_RegressFlowResNet18_3Joints_n9000_4998731f" \
-    --motion_model_save_path "human_pose_pipeline/models/motion_prediction/final_model/dct_pose_transformer.pickle" \
-    --motion_score_fn_path "human_pose_pipeline/models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle" \
-    --split "test" \
-    --enable_ood \
-    --n_correct_poses_required 3 \
-    --output_dir "results/final/full_pipeline/n_correct_poses_required_3/"
+# Table: Full pipeline evaluation results on H36M (H invalid %, Motion valid %, MPJPE mm)
+# for several values of N_req (number of correct poses required before motion prediction).
+set -e
 
-python human_pose_pipeline/examples/eval_full_pipeline.py \
-    --pose_model_save_path "human_pose_pipeline/models/pose_estimation" \
-    --pose_run_name "jax_resnet50_regressflow" \
-    --pose_base_key "H36M_RegressFlowResNet18_3Joints_n9000_4998731f" \
-    --motion_model_save_path "human_pose_pipeline/models/motion_prediction/final_model/dct_pose_transformer.pickle" \
-    --motion_score_fn_path "human_pose_pipeline/models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle" \
-    --split "test" \
-    --enable_ood \
-    --n_correct_poses_required 50 \
-    --output_dir "results/final/full_pipeline/n_correct_poses_required_50/"
+POSE_MODEL="models/pose_estimation/jax_resnet50_regressflow"
+POSE_SCORE_FN="models/ood_functions/pose_score_fn.cloudpickle"
+MOTION_MODEL="models/motion_prediction/final_model/dct_pose_transformer.pickle"
+MOTION_SCORE_FN="models/ood_functions/motion_score_fn.cloudpickle"
 
-python human_pose_pipeline/examples/eval_full_pipeline.py \
-    --pose_model_save_path "human_pose_pipeline/models/pose_estimation" \
-    --pose_run_name "jax_resnet50_regressflow" \
-    --pose_base_key "H36M_RegressFlowResNet18_3Joints_n9000_4998731f" \
-    --motion_model_save_path "human_pose_pipeline/models/motion_prediction/final_model/dct_pose_transformer.pickle" \
-    --motion_score_fn_path "human_pose_pipeline/models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle" \
-    --split "test" \
-    --enable_ood \
-    --n_correct_poses_required 5 \
-    --output_dir "results/final/full_pipeline/n_correct_poses_required_5/"
+for N in 3 5 10 50; do
+    python -m conformal_human_motion_prediction.examples.eval_full_pipeline \
+        --pose_model_path "$POSE_MODEL" \
+        --pose_score_fn_path "$POSE_SCORE_FN" \
+        --motion_model_save_path "$MOTION_MODEL" \
+        --motion_score_fn_path "$MOTION_SCORE_FN" \
+        --split "test" \
+        --enable_ood \
+        --n_correct_poses_required "$N" \
+        --output_dir "results/final/full_pipeline/n_correct_poses_required_${N}/"
+done
 
-python human_pose_pipeline/examples/eval_full_pipeline.py \
-    --pose_model_save_path "human_pose_pipeline/models/pose_estimation" \
-    --pose_run_name "jax_resnet50_regressflow" \
-    --pose_base_key "H36M_RegressFlowResNet18_3Joints_n9000_4998731f" \
-    --motion_model_save_path "human_pose_pipeline/models/motion_prediction/final_model/dct_pose_transformer.pickle" \
-    --motion_score_fn_path "human_pose_pipeline/models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle" \
-    --split "test" \
-    --enable_ood \
-    --n_correct_poses_required 10 \
-    --output_dir "results/final/full_pipeline/n_correct_poses_required_10/"
-
-python human_pose_pipeline/generate_plots/generate_full_pipeline_results.py
+# Build the LaTeX table from the saved CSVs.
+python -m conformal_human_motion_prediction.generate_plots.generate_full_pipeline_results

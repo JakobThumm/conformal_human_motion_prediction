@@ -277,8 +277,8 @@ def main():
         print("Initializing models...")
 
         # Initialize JAX pose estimation model
-        models_dir = os.path.join(root_dir, "models/pose_estimation", "H36M", "RegressFlow", "seed_420")
-        checkpoint_path_jax = os.path.join(models_dir, "finetuned_h36m_regressflow_with_unc")
+        models_dir = os.path.join(root_dir, "models/pose_estimation")
+        checkpoint_path_jax = os.path.join(models_dir, "jax_resnet50_regressflow")
         pose_estimation_jit_fn, params, batch_stats = initialize_jax_models(checkpoint_path_jax)
 
         # Initialize YOLO human detector (not used but required for consistency)

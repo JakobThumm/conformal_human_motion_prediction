@@ -128,7 +128,7 @@ def main():
 
     # Paths
     model_dir = os.path.join(
-        root_dir, "conformal_human_motion_prediction", "models", "motion_prediction", args.run_id
+        root_dir, "models", "motion_prediction", args.run_id
     )
     checkpoint_dir = os.path.join(model_dir, "checkpoints")
     config_path = os.path.join(model_dir, "dct_pose_transformer_args.json")

@@ -116,11 +116,9 @@ def main():
     # Load camera parameters
     if args.camera_params_path is None:
         # Default path
-        models_dir = os.path.join(
-            root_dir,
-            "models/pose_estimation/H36M/RegressFlow/seed_420"
+        camera_parameters_path = os.path.join(
+            root_dir, "models/pose_estimation", 'camera-parameters.json'
         )
-        camera_parameters_path = os.path.join(models_dir, 'camera-parameters.json')
     else:
         camera_parameters_path = args.camera_params_path
 

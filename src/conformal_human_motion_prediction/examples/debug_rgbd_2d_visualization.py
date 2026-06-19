@@ -173,8 +173,8 @@ def main():
         print("Initializing models...")
 
         # Use full RegressFlow model with uncertainty
-        models_dir = os.path.join(root_dir, "models/pose_estimation", "H36M", "RegressFlow", "seed_420")
-        checkpoint_path_jax = os.path.join(models_dir, "finetuned_h36m_regressflow_with_unc")
+        models_dir = os.path.join(root_dir, "models/pose_estimation")
+        checkpoint_path_jax = os.path.join(models_dir, "jax_resnet50_regressflow")
         num_output_joints = 17
         print("Using RegressFlowWithAleatoric model for uncertainty estimation")
 

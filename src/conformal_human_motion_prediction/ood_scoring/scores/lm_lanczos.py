@@ -6,7 +6,7 @@ from conformal_human_motion_prediction.ood_scoring.autodiff.ggn import get_ggn_v
 from conformal_human_motion_prediction.ood_scoring.autodiff.hessian import get_hessian_vector_product, get_hessian_vector_product_dataloader
 from conformal_human_motion_prediction.ood_scoring.autodiff.jacobian import get_jacobian_vector_product, get_jacobianT_vector_product, get_jacobian_vector_product_filtered, get_jacobianT_vector_product_filtered
 from conformal_human_motion_prediction.ood_scoring.lanczos.low_memory import low_memory_lanczos
-from conformal_human_motion_prediction.ood_scoring.estimators.frobenius import get_frobenius_norm, get_frobenius_norm_sequential, get_frobenius_norm_difference_sequential
+from conformal_human_motion_prediction.ood_scoring.estimators.frobenius import get_frobenius_norm, get_frobenius_norm_difference_sequential
 from conformal_human_motion_prediction.ood_scoring.sketches import No_sketch, Dense_sketch, SRFT_sketch
 import numpy as np
 import time
@@ -190,26 +190,20 @@ def _load_eigenpairs(cache_dir, base_key):
     return cache_data['eigenvec'], cache_data['eigenval']
 
 
-def _save_score_functions(ood_functions_dir, base_key, score_fun, eigenval, approx_quadratic_form, quadratic_form, args_dict):
-    """Save score functions and eigenvalues"""
-    os.makedirs(ood_functions_dir, exist_ok=True)
-    cache_path = os.path.join(ood_functions_dir, f"{base_key}_score_functions.cloudpickle")
+def _save_score_functions(score_fn_path, score_fun, eigenval, args_dict):
+    """Save score function, eigenvalues, and args to a slim cloudpickle file."""
+    os.makedirs(os.path.dirname(os.path.abspath(score_fn_path)), exist_ok=True)
 
     cache_data = {
         'score_fun': score_fun,
         'eigenval': eigenval,
-        'approx_quadratic_form': approx_quadratic_form,
-        'quadratic_form': quadratic_form,
-        'lanczos_lm_iter': args_dict['lanczos_lm_iter'],
-        'lanczos_hm_iter': args_dict.get('lanczos_hm_iter', 0),
-        'use_eigenvals': args_dict.get('use_eigenvals', False),
-        'prior_std': args_dict.get('prior_std', 0.1),
+        'args_dict': args_dict,
     }
 
-    with open(cache_path, 'wb') as f:
+    with open(score_fn_path, 'wb') as f:
         cloudpickle.dump(cache_data, f)
 
-    print(f"Saved score functions to {cache_path}")
+    print(f"Saved score functions to {score_fn_path}")
 
 
 def load_score_functions(ood_functions_dir, base_key):
@@ -227,6 +221,24 @@ def load_score_functions(ood_functions_dir, base_key):
         cache_data['eigenval'],
         cache_data['approx_quadratic_form'],
         cache_data['quadratic_form']
+    )
+
+
+def load_score_functions_from_path(score_fn_path):
+    """Load score functions directly from a .cloudpickle path (mirrors the motion loader).
+
+    Tolerates both the old full-dict format (with approx_quadratic_form / quadratic_form keys)
+    and the new slim format (score_fun + eigenval + args_dict only).
+    """
+    if not os.path.exists(score_fn_path):
+        raise FileNotFoundError(f"Score functions file not found: {score_fn_path}")
+    cache_data = _compat_load(score_fn_path)
+    print(f"Loaded score functions from {score_fn_path}")
+    return (
+        cache_data['score_fun'],
+        cache_data.get('eigenval'),
+        cache_data.get('approx_quadratic_form'),
+        cache_data.get('quadratic_form'),
     )
 
 

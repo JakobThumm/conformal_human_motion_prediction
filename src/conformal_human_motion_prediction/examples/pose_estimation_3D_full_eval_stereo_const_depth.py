@@ -32,7 +32,7 @@ from conformal_human_motion_prediction.utils.eval_utils import (
     save_mpjpe_results,
 )
 from conformal_human_motion_prediction.datasets.h36m import Human36mDatasetTwoCameras
-from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions
+from conformal_human_motion_prediction.ood_scoring.scores.lm_lanczos import load_score_functions_from_path
 from conformal_human_motion_prediction.pose_estimation.inference_helper import (
     initialize_jax_models,
     initialize_human_detector,
@@ -59,12 +59,9 @@ def main():
     )
     parser.add_argument('--data_path', type=str, default='datasets/',
                         help='Root path containing H36M/extracted/')
-    parser.add_argument('--model_save_path', type=str,
-                        default='models/pose_estimation',
-                        help='Path to saved models directory')
-    parser.add_argument('--run_name', type=str,
-                        default='finetuned_h36m_regressflow_with_unc',
-                        help='Model checkpoint run name')
+    parser.add_argument('--model_path', type=str,
+                        default='models/pose_estimation/jax_resnet50_regressflow',
+                        help='Direct path to the pose model checkpoint base')
     parser.add_argument('--split', type=str, default='validation',
                         help='Dataset split: train / validation / test')
     parser.add_argument('--camera_ids', type=str, nargs=2,
@@ -77,12 +74,9 @@ def main():
     parser.add_argument('--sigma_depth', type=float, default=2.0,
                         help='Constant depth std dev in mm (replaces stereo covariance)')
     parser.add_argument('--enable_ood', action='store_true',
-                        help='Enable OOD detection; requires --base_key')
-    parser.add_argument('--base_key', type=str, default=None,
-                        help='Cache key for OOD score functions')
-    parser.add_argument('--ood_functions_dir', '--cache_dir', dest='ood_functions_dir',
-                        type=str, default='models/ood_functions/',
-                        help='Directory with OOD score functions; --cache_dir is a deprecated alias')
+                        help='Enable OOD detection; requires --score_fn_path')
+    parser.add_argument('--score_fn_path', type=str, default=None,
+                        help='Direct path to the OOD score functions (.cloudpickle)')
     parser.add_argument('--ood_threshold', type=float, default=OOD_THRESHOLD)
     parser.add_argument('--output_dir', type=str,
                         default='results/pose_3d_stereo_const_depth',
@@ -96,10 +90,8 @@ def main():
     print("=" * 60)
 
     base_directory = os.path.join(root_dir, args.data_path, 'H36M', 'extracted')
-    models_dir = os.path.join(
-        root_dir, args.model_save_path, 'H36M', 'RegressFlow', 'seed_420'
-    )
-    camera_params_path = os.path.join(models_dir, 'camera-parameters.json')
+    checkpoint_path = os.path.join(root_dir, args.model_path)
+    camera_params_path = os.path.join(os.path.dirname(checkpoint_path), 'camera-parameters.json')
 
     if not os.path.exists(camera_params_path):
         print(f"Camera parameters not found: {camera_params_path}")
@@ -109,18 +101,17 @@ def main():
     # Initialise models
     # ------------------------------------------------------------------
     print("\nInitialising models...")
-    checkpoint_path = os.path.join(models_dir, args.run_name)
     pose_estimation_jit_fn, params, batch_stats = initialize_jax_models(checkpoint_path)
     human_detector, device_torch = initialize_human_detector(args.device)
     print("Models initialised.")
 
     score_fn = None
     if args.enable_ood:
-        if args.base_key is None:
-            print("WARNING: --enable_ood set but --base_key not provided; OOD disabled.")
+        if not args.score_fn_path:
+            print("WARNING: --enable_ood set but --score_fn_path not provided; OOD disabled.")
         else:
-            print(f"Loading OOD score functions (key={args.base_key}) ...")
-            score_fn, _, _, _ = load_score_functions(args.ood_functions_dir, args.base_key)
+            print(f"Loading OOD score functions from: {args.score_fn_path} ...")
+            score_fn, _, _, _ = load_score_functions_from_path(args.score_fn_path)
             print(f"OOD threshold: {args.ood_threshold:.6f}")
 
     # ------------------------------------------------------------------
