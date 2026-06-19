@@ -5,6 +5,16 @@ and conformal uncertainty quantification. Given camera images, it estimates 2D/3
 (RegressFlow / YOLO-Pose), predicts future motion (DCTPoseTransformer), and flags out-of-distribution
 inputs using a low-memory sketched-Lanczos Laplace approximation.
 
+## ROS2 / real-hardware
+
+To run the conformal human motion prediction (`chmp`) in ROS2, we provide the following repositories:
+
+- [`chmp_workspace`](https://github.com/JakobThumm/chmp_workspace) — docker + scripts that assemble
+  a runnable ROS2 workspace, dev-mounting this repo as an editable install and optionally pulling
+  `realsense_rgbd_streamer` for RealSense hardware.
+- [`chmp_inference`](https://github.com/JakobThumm/chmp_inference) — the ROS2 node package that
+  runs this pipeline (depends on `uq_msgs` for custom messages).
+
 ## Repository structure
 
 ```
@@ -306,14 +316,3 @@ VSCode launch config in `.vscode/launch.json`):
   GPU setup section.
 - **Out-of-memory from JAX** on a shared GPU: JAX pre-allocates 75 % of VRAM by default; set
   `XLA_PYTHON_CLIENT_PREALLOCATE=false` (or `XLA_PYTHON_CLIENT_MEM_FRACTION`).
-
-## ROS2 / real-hardware
-
-This repo is **ROS2-free**. The real-time ROS2 integration lives in separate repos under
-`github.com/JakobThumm`:
-
-- [`chmp_inference`](https://github.com/JakobThumm/chmp_inference) — the ROS2 node package that
-  runs this pipeline (depends on `uq_msgs` for custom messages).
-- [`chmp_workspace`](https://github.com/JakobThumm/chmp_workspace) — docker + scripts that assemble
-  a runnable ROS2 workspace, dev-mounting this repo as an editable install and optionally pulling
-  `realsense_rgbd_streamer` for RealSense hardware.
