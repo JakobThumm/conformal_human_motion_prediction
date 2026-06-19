@@ -34,18 +34,6 @@ if [ ! -f "$USER_HOME/.bashrc" ]; then
     cp /etc/skel/.bashrc "$USER_HOME/.bashrc"
 fi
 
-# Add ROS2 setup to bashrc if not already there
-if ! grep -q "source /opt/ros/jazzy/setup.bash" "$USER_HOME/.bashrc"; then
-    echo "" >> "$USER_HOME/.bashrc"
-    echo "# ROS2 Jazzy setup" >> "$USER_HOME/.bashrc"
-    echo "source /opt/ros/jazzy/setup.bash" >> "$USER_HOME/.bashrc"
-    echo "" >> "$USER_HOME/.bashrc"
-    echo "# Source ROS2 workspace if it exists" >> "$USER_HOME/.bashrc"
-    echo "if [ -f /workspace/ros2_ws/install/setup.bash ]; then" >> "$USER_HOME/.bashrc"
-    echo "    source /workspace/ros2_ws/install/setup.bash" >> "$USER_HOME/.bashrc"
-    echo "fi" >> "$USER_HOME/.bashrc"
-fi
-
 # Add virtual environment activation to bashrc if not already enabled
 if ! grep -q "if \[ -f /workspace/unc/bin/activate \]; then" "$USER_HOME/.bashrc"; then
     echo "" >> "$USER_HOME/.bashrc"

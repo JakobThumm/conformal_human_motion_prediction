@@ -309,6 +309,11 @@ VSCode launch config in `.vscode/launch.json`):
 
 ## ROS2 / real-hardware
 
-`ros2_packages/` and `ros2_ws/` run the pipeline on real hardware. They depend on two external
-packages (`realsense_rgbd_streamer`, `uq_msgs`, hosted under `github.com/JakobThumm`) that were
-previously git submodules; re-add them when restructuring the ROS2 stack.
+This repo is **ROS2-free**. The real-time ROS2 integration lives in separate repos under
+`github.com/JakobThumm`:
+
+- [`chmp_inference`](https://github.com/JakobThumm/chmp_inference) — the ROS2 node package that
+  runs this pipeline (depends on `uq_msgs` for custom messages).
+- [`chmp_workspace`](https://github.com/JakobThumm/chmp_workspace) — docker + scripts that assemble
+  a runnable ROS2 workspace, dev-mounting this repo as an editable install and optionally pulling
+  `realsense_rgbd_streamer` for RealSense hardware.

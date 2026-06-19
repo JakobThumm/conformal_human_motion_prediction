@@ -9,7 +9,7 @@ export USER_ID=$(id -u)
 export GROUP_ID=$(id -g)
 export USERNAME=$(whoami)
 
-echo "Building Docker image for uncertainty quantification with CUDA and ROS2 Jazzy..."
+echo "Building Docker image for conformal_human_motion_prediction with CUDA..."
 echo "User: $USERNAME (UID: $USER_ID, GID: $GROUP_ID)"
 
 # Get the directory where this script is located

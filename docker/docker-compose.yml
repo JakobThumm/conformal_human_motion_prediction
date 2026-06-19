@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  uncertainty-quantification:
+  conformal-hmp:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -9,8 +9,8 @@ services:
         - USER_ID=${USER_ID:-1000}
         - GROUP_ID=${GROUP_ID:-1000}
         - USERNAME=${USERNAME:-user}
-    image: uncertainty-quantification:latest
-    container_name: uq-ros2-cuda
+    image: conformal-hmp:latest
+    container_name: chmp-dev
 
     # Enable GPU support
     deploy:
@@ -28,7 +28,6 @@ services:
       - ../../models:/models:rw
       # Optional: Preserve bash history
       - bash_history:/home/${USERNAME:-user}/.bash_history
-      - ./router.json5:/ros2_ws/router.json5:ro
 
     # Set working directory
     working_dir: /workspace
@@ -45,30 +44,15 @@ services:
       - QT_X11_NO_MITSHM=1
       - LANG=en_US.UTF-8
       - LC_ALL=en_US.UTF-8
+      # The GPU is often shared -> avoid JAX's 75% pre-allocation OOM
+      - XLA_PYTHON_CLIENT_PREALLOCATE=false
       # User configuration for entrypoint
       - LOCAL_USER_ID=${USER_ID:-1000}
       - LOCAL_GROUP_ID=${GROUP_ID:-1000}
       - LOCAL_USERNAME=${USERNAME:-user}
-      # ROS2 workspace configuration
-      - ROS2_WS=/workspace/ros2_ws
-      - ROS_DOMAIN_ID=1
-      # - ROS_LOCALHOST_ONLY=0
-      - RMW_IMPLEMENTATION=rmw_zenoh_cpp
-      - ZENOH_ROUTER_CONFIG_URI=/ros2_ws/router.json5
 
-    # Network mode (optional: for ROS2 communication)
-    network_mode: host
-
-    # IPC mode for shared memory (useful for ROS2)
-    ipc: host
-
-    # Start the Zenoh router
-    command: /bin/bash -c "source /opt/ros/jazzy/setup.bash && ros2 run rmw_zenoh_cpp rmw_zenohd"
-
-    # Optional: X11 forwarding for GUI applications (RViz, etc.)
-    # Uncomment the lines below if you need GUI support (after starting the container)
-    #   - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    #   - $HOME/.Xauthority:/home/${USERNAME:-user}/.Xauthority:rw
+    # Keep the detached container alive
+    command: sleep infinity
 
 volumes:
   bash_history:

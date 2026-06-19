@@ -9,4 +9,4 @@ USERNAME=${USERNAME:-$(whoami)}
 
 echo "Opening shell in Docker container as user '$USERNAME'..."
 
-docker exec -it -u "$USERNAME" uq-ros2-cuda bash
+docker exec -it -u "$USERNAME" chmp-dev bash

@@ -126,10 +126,10 @@ We have two things:
     - [ ] Uncertainty calibration for pose estimation
     - [x] Uncertainty calibration for motion prediction
  9. Communication between robot PC and GPU workstation.
-    - [x] Write NVidia Cuda and ROS2 Jazzy Docker container
+    - [x] Write NVidia Cuda and ROS2 Jazzy Docker container (ROS2 stack moved to the `chmp_workspace` repo; this repo's docker is now CUDA-only)
     - [ ] Communicate image between Laptop and Workstation
     - [ ] Define custom messages for incoming images and outgoing predictions
-    - [ ] Write ROS2 node that runs predictions
+    - [x] Write ROS2 node that runs predictions (in the `chmp_inference` repo)
     - [ ] Visualize in RViz: image, predicted motion at t=X ms reachable set, predicted current pose reachable set
  10. Support the D435i RGBD camera instead of triangulation.
  11. Real-world tests on the Panda in our lab.

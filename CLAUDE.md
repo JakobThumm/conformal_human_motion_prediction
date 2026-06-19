@@ -62,4 +62,5 @@ paper hyperparameters; lower `--test_batch_size` on GPU-memory issues.
   `--use_optuna` needs the optional `optuna` (in the `dev` extra).
 - Pose nets were trained in PyTorch and weight-transferred to JAX; the deployed pipeline mostly uses the
   YOLO-Pose model, so pose retraining is out of scope here.
-- `ros2_packages/` / `ros2_ws/` (real-hardware) are deferred.
+- This repo is ROS2-free. Real-hardware ROS2 lives in separate repos: `chmp_inference` (node
+  package) and `chmp_workspace` (docker workspace), under `github.com/JakobThumm`.

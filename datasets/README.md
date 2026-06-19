@@ -63,4 +63,5 @@ python -m conformal_human_motion_prediction.pose_estimation.preprocess_tiger_pos
 ## 3. rgbd_test (real-hardware sequences)
 
 RGB-D sequences captured for the on-robot pipeline, placed under `datasets/rgbd_test/`.
-These are produced by the ROS2 capture stack (see `ros2_packages/`).
+These are produced by the external ROS2 capture stack (`realsense_rgbd_streamer` /
+`chmp_workspace`, under `github.com/JakobThumm`).
