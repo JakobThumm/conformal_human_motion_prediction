@@ -412,3 +412,37 @@ def calibrate_covariance_matrices(
     covariance_matrices = covariance_matrices * scaling_factors_times
     covariance_matrices = covariance_matrices * scaling_factors_joints
     return covariance_matrices
+
+
+def compute_human_occupancies(
+    human_meas: np.ndarray,
+    meas_uncertainty: np.ndarray,
+    human_radius: np.ndarray
+) -> np.ndarray:
+    """Compute the space the human body occupies at each time point.
+
+    Args:
+      human_meas: ground truth human measurements in mm, shape = [N, n_t, n_j, 3]
+      meas_uncertainty: measurement uncertainty in mm, shape = [N, n_t, n_j]
+      human_radius: radius of the human body parts in mm, shape = [n_j]
+
+    Returns:
+      human_occupancies: ground truth radius of spherical human occupancies in mm, shape = [N, n_t, n_j]
+    """
+    human_meas = np.asarray(human_meas)
+    human_radius = np.asarray(human_radius)
+    N, n_t, n_j, _ = human_meas.shape
+    if human_radius.shape != (n_j,):
+        raise ShapeError(
+            f"human_radius must have shape ({n_j},), got {human_radius.shape}."
+        )
+    # Each joint is occupied by a sphere of its body-part radius, centered at the
+    # measured joint position. The radius is constant over samples and time.
+    human_occupancies = meas_uncertainty + np.broadcast_to(
+        human_radius[None, None, :], (N, n_t, n_j)
+    ).astype(float).copy()
+    # All-zero measurements mark invalid/missing joints (codebase convention);
+    # those occupy no space.
+    invalid = np.all(human_meas == 0.0, axis=-1)  # [N, n_t, n_j]
+    human_occupancies[invalid] = 0.0
+    return human_occupancies
