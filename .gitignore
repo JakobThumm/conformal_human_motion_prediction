@@ -10,6 +10,7 @@ dist/
 /virtualenv
 .venv/
 venv/
+unc/
 
 # Editor / workspace
 *.code-workspace
@@ -42,3 +43,5 @@ cache/
 
 # Legacy / personal (not part of this repo)
 marian_code/
+
+scripts/upload_models.py
