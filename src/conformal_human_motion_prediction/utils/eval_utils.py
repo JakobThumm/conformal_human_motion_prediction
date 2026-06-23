@@ -665,3 +665,30 @@ def save_motion_validity_stats(
             len(pose_buffers_good),
         ])
     print(f"Saved motion validity stats to {filepath}")
+
+
+def get_too_fast_human_movement(
+    human_meas: np.ndarray,
+    threshold: float,
+    dt: float,
+) -> np.ndarray:
+    """Return a mask indicating, which human body part was faster than the threshold.
+
+    The Cartesian speed of every joint is estimated via finite differences between
+    consecutive time steps. The first time step has no predecessor, so it is treated
+    as not too fast (speed 0). Positions are expected in mm, the threshold in m/s.
+
+    Args:
+      human_meas: ground truth human measurements in mm, shape = [N, n_t, n_j, 3]
+      threshold: maximal Cartesian velocity in m/s
+      dt: time delta between consecutive measurements in seconds
+    Returns:
+      mask: True if joint j at time t is too fast, shape = [N, n_t, n_j]
+    """
+    # Finite-difference displacement between consecutive frames -> [N, n_t-1, n_j, 3] in mm.
+    displacements = np.diff(human_meas, axis=1)
+    # Cartesian speed in m/s.
+    speeds = np.linalg.norm(displacements, axis=-1) / 1000.0 / dt  # [N, n_t-1, n_j]
+    # First frame has no predecessor; treat it as not too fast.
+    speeds = np.concatenate([np.zeros_like(speeds[:, :1]), speeds], axis=1)  # [N, n_t, n_j]
+    return speeds > threshold
