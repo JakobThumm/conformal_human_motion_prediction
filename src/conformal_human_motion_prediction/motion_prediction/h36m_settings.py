@@ -20,3 +20,9 @@ COV_CALIBRATION_FACTORS = [1.0, 1.0, 1.0, 1.0, 1.0,
 SET_LIKELIHOOD = 0.99
 
 SARA_MEASUREMENT_UNCERTAINTY = 0.005
+
+# Hand speed value according to DIN EN ISO 13855 2025-10-00 EN
+V_HUMAN_ISO = 2.0
+
+# Maximal speed of collaborative robot according to ISO TS 15066
+V_ROBOT_ISO = 0.25

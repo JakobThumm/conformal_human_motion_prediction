@@ -371,7 +371,7 @@ def save_coverage_stats(
 def compute_sara_predictions(
     last_input_poses: np.ndarray,
     prediction_horizon_times: list[float],
-    v_human: float = 1.6,
+    v_human: float = 2.0,
     measurement_uncertainty: float = 0.0
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute the reachable set with the constant velocity model of SARA.

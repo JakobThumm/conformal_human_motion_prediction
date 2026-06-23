@@ -18,6 +18,7 @@ import cloudpickle
 import jax.numpy as jnp
 from PIL import Image
 
+from conformal_human_motion_prediction.motion_prediction.h36m_settings import V_HUMAN_ISO
 from conformal_human_motion_prediction.utils.visualization import plot_ood_score_histogram
 from ultralytics import YOLO
 from conformal_human_motion_prediction.motion_prediction.inference_helper import run_motion_prediction
@@ -447,7 +448,7 @@ def main():
     sara_predictions, sara_radius = compute_sara_predictions(
         last_input_poses=last_poses_np,
         prediction_horizon_times=prediction_horizon_times,
-        v_human=1.6,
+        v_human=V_HUMAN_ISO,
         measurement_uncertainty=SARA_MEASUREMENT_UNCERTAINTY
     )
     coverage_stats_sara, _ = simple_coverage_stats_sara(

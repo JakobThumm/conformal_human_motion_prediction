@@ -7,6 +7,7 @@ import cloudpickle
 from scipy.stats import chi2
 from pathlib import Path
 
+from conformal_human_motion_prediction.motion_prediction.h36m_settings import V_HUMAN_ISO
 from conformal_human_motion_prediction.motion_prediction.inference_helper import calibrate_covariance_matrices
 from conformal_human_motion_prediction.utils.eval_utils import compute_sara_predictions, convert_covariance_matrices_to_set, evaluate_uncertainty_coverage_with_covariance, print_coverage_stats, print_simple_coverage_stats_sara, save_coverage_stats_sara, simple_coverage_stats_sara
 
@@ -156,7 +157,7 @@ def main():
     sara_predictions, sara_radius = compute_sara_predictions(
         last_input_poses=last_input_poses,
         prediction_horizon_times=prediction_horizon_times,
-        v_human=1.6,
+        v_human=V_HUMAN_ISO,
         measurement_uncertainty=SARA_MEASUREMENT_UNCERTAINTY
     )
     coverage_stats_sara, _ = simple_coverage_stats_sara(
