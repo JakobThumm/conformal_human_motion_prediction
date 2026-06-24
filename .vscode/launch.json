@@ -356,10 +356,9 @@
           "--data_path", "datasets/",
           "--dataset_name", "Human36mMotionDataset3DWithInputUncertainty",
           "--split", "validation",
-          "--model_save_path", "models/motion_prediction/4e8ur8je/checkpoints/stage_4/dct_pose_transformer.pickle",
-          // "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
-          // "--enable_ood",
-          "--motion_score_fn_path", "models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM1440of1600_sketch_srft_seed0_size20000.cloudpickle"
+          "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
+          "--enable_ood",
+          "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"
       ]
     },
     {
@@ -443,6 +442,25 @@
       ]
     },
     {
+      "name": "Simulate Robot Shield",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "src/conformal_human_motion_prediction/examples/simulate_robot_shield.py",
+      "console": "integratedTerminal",
+      "env": {
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+      },
+      "args": [
+        // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
+        "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
+        "--num_robot_poses", "128",
+        "--pose_radius", "5.0",
+        "--pose_z_offset", "0.2",
+        "--num_workers", "24",  // raise to parallelize poses; child workers are not debugged
+        "--seed", "0"
+      ]
+    },
+    {
       "name": "Score DCTPoseTransformer H36M Reduced Output OOD",
       "type": "debugpy",
       "request": "launch",
@@ -467,10 +485,10 @@
           "--sketch_size", "10000",
           //"--use_eigenvals",
           //"--prior_std", "0.00000000001",
-          "--cache_dir", "cache/",
-          "--load_ggn",
-          "--load_sketch",
-          "--load_eigenpairs",
+          // "--cache_dir", "cache/",
+          // "--load_ggn",
+          // "--load_sketch",
+          // "--load_eigenpairs",
           // "--load_score_functions"
       ]
     },
@@ -481,9 +499,9 @@
       "program": "src/conformal_human_motion_prediction/examples/id_vs_ood_motion_prediction.py",
       "console": "integratedTerminal",
       "args": [
-        "--score_fn", "models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle",
+        "--score_fn", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle",
         "--max_samples", "4000",
-        "--results_dir", "results/motion_prediction_ood"
+        "--output_dir", "results/motion_prediction_ood"
       ]
     },
     {

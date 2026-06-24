@@ -70,7 +70,7 @@ def main():
     parser.add_argument(
         "--motion_score_fn_path",
         type=str,
-        default="models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM1440of1600_sketch_srft_seed0_size20000.cloudpickle",
+        default="models/ood_functions/dct_pose_transformer_score_fn.cloudpickle",
         help="Path to the OOD score function for the motion prediction.",
     )
     parser.add_argument(
