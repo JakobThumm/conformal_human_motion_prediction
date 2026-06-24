@@ -15,12 +15,17 @@ from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
     PREDICTION_HORIZON_LENGTH,
     REDUCED_TIMESTEP,
     REDUCED_JOINT_INDICES,
-    FAKE_INPUT_UNCERTAINTY
+    FAKE_INPUT_UNCERTAINTY,
+    V_HUMAN_ISO,
 )
 from conformal_human_motion_prediction.datasets.utils import get_loader
+from conformal_human_motion_prediction.utils.eval_utils import get_too_fast_human_movement
 
 # Dataset splits matching original H36M
 SPLIT = {"train": ["S1", "S6", "S7", "S8", "S9"], "validation": ["S11"], "test": ["S5"]}
+
+# H36M is recorded at 50 Hz; load_data/load_data_preprocessed downsample by 2 (``offset::2``).
+DOWNSAMPLED_FPS = 25.0
 
 
 class Human36mMotionDataset3D(Dataset):
@@ -47,6 +52,10 @@ class Human36mMotionDataset3D(Dataset):
         self.predict_frames = predict_frames
         self.jax_format = jax_format
         self.pose_data = []
+        # GT (mocap) pose at the last input frame, per window. Only the load_data_preprocessed path
+        # needs it (there the stored input frame is the noisy camera pose, not mocap); load_data
+        # windows are all mocap so the boundary pose is already in the window.
+        self._gt_last_input = None
         if not input_uncertainty:
             self.pose_data = self.load_data(base_directory, split)
             self.covariance_data = None
@@ -57,6 +66,11 @@ class Human36mMotionDataset3D(Dataset):
                 base_directory_gt=base_directory,
                 split=split
             )
+        # Drop windows with implausibly fast motion across the mocap prediction horizon, INCLUDING
+        # the last-mocap-input -> first-mocap-prediction transition.
+        # We only include data, where the human moves slower than the ISO limit v <= 2.0 m/s.
+        # To disable, increase the V_HUMAN_ISO value in the config.
+        self._filter_fast_target_motion(input_is_mocap=not input_uncertainty)
         self.reduce_size = reduce_size
         self.reduced_timestep = reduced_timestep
         self.reduced_joints = reduced_joints
@@ -96,6 +110,7 @@ class Human36mMotionDataset3D(Dataset):
     def load_data_preprocessed(self, base_directory_uncertain, base_directory_gt, split):
         all_poses = []
         all_covariances = []
+        all_gt_last_input = []   # GT (mocap) pose at the last input frame, for the too-fast screen
         for subject in SPLIT[split]:
             uncertain_directory = os.path.join(base_directory_uncertain, subject)
             if not os.path.exists(uncertain_directory):
@@ -159,10 +174,60 @@ class Human36mMotionDataset3D(Dataset):
                             continue
                         all_poses.append(poses_window)
                         all_covariances.append(covariances_window)
+                        # GT (mocap) pose at the last input frame -- the stored window's input is the
+                        # noisy camera pose, so keep the mocap one for the boundary too-fast screen.
+                        all_gt_last_input.append(downsampled_gt_poses[i + self.input_frames - 1])
         all_poses = np.array(all_poses)
         all_covariances = np.array(all_covariances)
+        self._gt_last_input = np.array(all_gt_last_input)
         print(f"Loaded {len(all_poses)} sequences for {split} split from preprocessed data")
         return all_poses, all_covariances
+
+    def _filter_fast_target_motion(self, input_is_mocap, threshold=V_HUMAN_ISO, fps=DOWNSAMPLED_FPS):
+        """Drop windows with implausibly fast motion across the mocap prediction horizon.
+
+        Reuses ``get_too_fast_human_movement`` on the mocap frames from the last input pose through
+        the targets -- i.e. the differenced span covers the last-mocap-input -> first-mocap-target
+        transition AND all in-target transitions. That function treats its first frame as speed 0,
+        so the input's internal (and, in the camera case, noisy) motion is never differenced. A
+        surviving speed above ``threshold`` flags a mocap measurement jump. Poses are in mm.
+
+        The mocap source of the boundary pose differs by load path (hence ``input_is_mocap``):
+          * load_data (input_is_mocap=True): the whole window is mocap, so the last input frame of
+            the stored window is the boundary pose -> screen ``window[input_frames-1:]``.
+          * load_data_preprocessed (input_is_mocap=False): the stored input frame is the noisy
+            camera pose, so the GT boundary pose saved in ``self._gt_last_input`` is prepended to
+            the (mocap) target frames.
+        """
+        n_before = len(self.pose_data)
+        if n_before == 0:
+            return
+        poses = np.asarray(self.pose_data)                       # [N, seq, J*3]
+        if input_is_mocap:
+            screen = poses[:, self.input_frames - 1:]            # [N, P+1, J*3] last mocap in + targets
+        else:
+            boundary = np.asarray(self._gt_last_input)[:, None, :]   # [N, 1, J*3] GT last input pose
+            screen = np.concatenate([boundary, poses[:, self.input_frames:]], axis=1)  # [N, P+1, J*3]
+        N, T, D = screen.shape
+        if T < 2:
+            return
+        too_fast = get_too_fast_human_movement(screen.reshape(N, T, D // 3, 3), threshold, 1.0 / fps)
+        keep = ~np.any(too_fast, axis=(1, 2))                    # [N]
+        n_kept = int(keep.sum())
+        self._gt_last_input = None                               # no longer needed after screening
+        if n_kept == n_before:
+            print(f"Too-fast target filter: kept all {n_before} sequences "
+                  f"(no horizon joint exceeds {threshold} m/s)")
+            return
+        # Apply the mask, preserving the original container type of each attribute.
+        self.pose_data = (self.pose_data[keep] if isinstance(self.pose_data, np.ndarray)
+                          else [w for w, k in zip(self.pose_data, keep) if k])
+        if self.covariance_data is not None:
+            self.covariance_data = (self.covariance_data[keep]
+                                    if isinstance(self.covariance_data, np.ndarray)
+                                    else [w for w, k in zip(self.covariance_data, keep) if k])
+        print(f"Too-fast target filter: kept {n_kept}/{n_before} sequences "
+              f"(dropped {n_before - n_kept} with >{threshold} m/s mocap motion in the horizon)")
 
     def _augment_sequence(self, sequence, covariances=None):
         """Apply random Z-axis rotation and isotropic scaling augmentation.

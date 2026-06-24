@@ -11,13 +11,13 @@ OOD_THRESHOLD = 5e5
 N_CORRECT_POSES_REQUIRED = 3
 
 # Covariance calibration for motion prediction
-COV_CALIBRATION_CT = 1.2
-COV_CALIBRATION_IT = 0.4
-COV_CALIBRATION_FACTORS = [1.0, 1.0, 1.0, 1.0, 1.0,
+COV_CALIBRATION_CT = 4.0
+COV_CALIBRATION_IT = 0.2
+COV_CALIBRATION_FACTORS = [1.0, 1.0, 1.0, 1.0, 1.7,
                            1.7, 1.7, 1.0, 1.0, 1.0,
                            1.0, 1.5, 1.5]
 # Likelihood boundary for the predicted set
-SET_LIKELIHOOD = 0.99
+SET_LIKELIHOOD = 0.995
 
 SARA_MEASUREMENT_UNCERTAINTY = 0.005
 

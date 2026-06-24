@@ -453,11 +453,14 @@
       "args": [
         // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
         "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
-        "--num_robot_poses", "128",
+        "--num_robot_poses", "512",
         "--pose_radius", "5.0",
         "--pose_z_offset", "0.2",
         "--num_workers", "24",  // raise to parallelize poses; child workers are not debugged
-        "--seed", "0"
+        "--seed", "0",
+        "--mask_ood",
+        "--save_failures", "results/motion_prediction/shield_failures.npy",
+        "--max_failures", "200"
       ]
     },
     {

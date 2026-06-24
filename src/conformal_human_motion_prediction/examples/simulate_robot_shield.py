@@ -41,6 +41,10 @@ import os
 import time as _time
 from types import SimpleNamespace
 
+# This script's compute is numpy/scipy; jax is only pulled in transitively (cov calibration).
+# Force it to CPU so we don't depend on the (shared) GPU and so forked workers stay clean.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 import cloudpickle
 import numpy as np
 from scipy.spatial import cKDTree
@@ -180,6 +184,8 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
         idx.sort()
         print(f"  sub-sampled to {idx.size} human samples")
 
+    # Raw motion-prediction input (the model's last observed pose vector) kept for debugging.
+    human_input = np.asarray(results["last_input_poses"], dtype=np.float64)[idx]
     predictions, targets, cov, last_input = (
         predictions[idx], targets[idx], cov[idx], last_input[idx],
     )
@@ -215,7 +221,7 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     true_r = compute_human_occupancies(true_centers, true_unc, human_radius)
 
     horizon_times = np.array([0.0] + [(t + 1) * dt for t in range(PH)])  # [S]
-    return horizon_times, pred_centers, pred_r, true_centers, true_r
+    return horizon_times, pred_centers, pred_r, true_centers, true_r, human_input
 
 
 # --------------------------------------------------------------------------- geometry
@@ -379,8 +385,9 @@ def run_pose_pure(st, pose):
         active = np.ones(M, dtype=bool)
     c["active"] = int(active.sum())
     ai = np.flatnonzero(active)
+    instances = [] if st.save_failures else None
 
-    for rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r in st.traj_meta:
+    for rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r, t_ms in st.traj_meta:
         not_verified = np.zeros(M, dtype=bool)
         contact = np.zeros(M, dtype=bool)
         unsafe = np.zeros(M, dtype=bool)
@@ -462,6 +469,29 @@ def run_pose_pure(st, pose):
         c["n_unsafe"] += int(unsafe.sum())
         c["n_verified_contact"] += int((verified & contact).sum())
         c["n_verified_unsafe"] += int((verified & unsafe).sum())
+
+        # ---- record full geometry of each verified-but-contact instance for offline debugging ----
+        if instances is not None and len(instances) < st.max_failures:
+            vc = np.flatnonzero(verified & contact)
+            if vc.size:
+                vmask = valid
+                tp_pred = np.stack([st.tp_start[rows], st.tp_end[rows]], axis=1)        # [R,2]
+                rob_pred = dict(p1=p1r[rows], p2=p2r[rows], r=st.rr[rows],
+                                speed=st.spd[rows], tp=tp_pred)                          # transformed
+                fr = frow_rows[vmask]
+                rob_true = dict(p1=p1r[fr], p2=p2r[fr], r=st.rr[fr], speed=st.spd[fr],
+                                tp=np.stack([st.tp_start[fr], st.tp_end[fr]], axis=1))
+                for m in vc[: st.max_failures - len(instances)]:
+                    instances.append(dict(
+                        pose=np.asarray(pose, dtype=np.float64), t_ms=int(t_ms), motion_idx=int(m),
+                        unsafe=bool(unsafe[m]),
+                        robot_pred=rob_pred, robot_true=rob_true,
+                        human_pred_centers=st.pred_c[m], human_pred_radii=st.pred_r[m],
+                        human_true_centers=st.true_c[m], human_true_radii=st.true_r[m],
+                        human_input=st.human_input[m], horizon_times=st.horizon_times,
+                    ))
+    if instances is not None:
+        c["instances"] = instances
     return c
 
 
@@ -492,6 +522,12 @@ def main():
                         help="Radius (m) of the disk in which (x, y) base positions are sampled.")
     parser.add_argument("--pose_z_offset", type=float, default=0.2,
                         help="Base z-offset sampled uniformly in [-pose_z_offset, pose_z_offset] (m).")
+    parser.add_argument("--save_failures", type=str, default=None,
+                        help="Path to a .npy file: save full geometry of every verified-but-contact "
+                             "instance (robot occupancies, predicted/true human occupancy, motion input) "
+                             "for offline debugging.")
+    parser.add_argument("--max_failures", type=int, default=200,
+                        help="Cap on saved verified-but-contact instances per pose (bounds output size).")
     parser.add_argument("--t_cycle", type=float, default=None,
                         help="Safety-function cycle time (s); one monitored trajectory per cycle. "
                              "Default: derived from the robot planning-grid spacing. Used to "
@@ -554,7 +590,7 @@ def main():
     print(f"Loading human results from {results_file} ...")
     with open(results_file, "rb") as f:
         results = cloudpickle.load(f)
-    horizon_times, pred_c, pred_r, true_c, true_r = build_human_arrays(
+    horizon_times, pred_c, pred_r, true_c, true_r, human_input = build_human_arrays(
         results, args.fps, args.mask_ood, args.mask_too_fast, OOD_THRESHOLD,
         SET_LIKELIHOOD, SARA_MEASUREMENT_UNCERTAINTY, HUMAN_RADIUS,
         args.calibrate, COV_CALIBRATION_CT, COV_CALIBRATION_IT, COV_CALIBRATION_FACTORS,
@@ -650,7 +686,7 @@ def main():
                 glob_r.append(rct_r)
         else:
             max_addr, k = 0.0, 0
-        traj_meta.append((rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r))
+        traj_meta.append((rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r, t_ms))
 
     total_no_truth = sum(int((~m[2]).sum()) for m in traj_meta)  # for the level-1 pose skip
     if args.overapprox:
@@ -661,10 +697,13 @@ def main():
     # Read-only state shared with (forked) pose workers.
     st = SimpleNamespace(
         M=M, J=J, overapprox=args.overapprox, traj_meta=traj_meta, total_no_truth=total_no_truth,
-        tp_start=robot["tp_start"], rr=rr, spd=spd, p1=robot["p1"], p2=robot["p2"],
+        tp_start=robot["tp_start"], tp_end=robot["tp_end"], rr=rr, spd=spd,
+        p1=robot["p1"], p2=robot["p2"],
         horizon_times=horizon_times, v_human=V_HUMAN_ISO, v_robot=V_ROBOT_ISO,
         pred_trees=pred_trees, true_trees=true_trees, pred_rmax=pred_rmax, true_rmax=true_rmax,
         pred_c_flat=pred_c_flat, pred_r_flat=pred_r_flat, true_c_flat=true_c_flat, true_r_flat=true_r_flat,
+        pred_c=pred_c, pred_r=pred_r, true_c=true_c, true_r=true_r, human_input=human_input,
+        save_failures=bool(args.save_failures), max_failures=args.max_failures,
     )
     if args.overapprox:
         st.__dict__.update(
@@ -679,6 +718,7 @@ def main():
     print(f"Evaluating {len(poses)} random robot pose(s) over {n_workers} worker(s) "
           f"(xy in {args.pose_radius} m disk, z +/-{args.pose_z_offset} m, yaw +/-pi) ...")
     n_poses_skipped = 0  # whole poses culled at level 1 (robot never reaches any human)
+    failure_instances = []
 
     def accumulate(pidx, cc):
         nonlocal total_pairs, n_verified, n_contact, n_unsafe, n_verified_contact
@@ -689,6 +729,8 @@ def main():
         n_intervals_no_truth += cc["n_intervals_no_truth"]
         n_pred_cand += cc["n_pred_cand"]; n_true_cand += cc["n_true_cand"]
         n_poses_skipped += cc["n_poses_skipped"]
+        if "instances" in cc:
+            failure_instances.extend(cc["instances"])
         p = poses[pidx]
         print(f"  pose {pidx + 1}/{len(poses)} "
               f"(yaw={p[0]:+.2f} xy=({p[1]:+.2f},{p[2]:+.2f}) z={p[3]:+.2f}): active={cc['active']} "
@@ -704,6 +746,13 @@ def main():
     else:
         for pidx, pose in enumerate(poses):
             accumulate(pidx, run_pose_pure(st, pose))
+
+    if args.save_failures:
+        out = os.path.join(root_dir, args.save_failures) if not os.path.isabs(args.save_failures) else args.save_failures
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        np.save(out, np.array(failure_instances, dtype=object), allow_pickle=True)
+        print(f"\nSaved {len(failure_instances)} verified-but-contact instance(s) to {out} "
+              f"(load with np.load(path, allow_pickle=True)).")
 
     # ----------------------------------------------------------------- report
     def pct(num, den):
