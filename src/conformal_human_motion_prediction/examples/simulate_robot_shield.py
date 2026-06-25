@@ -559,6 +559,37 @@ def _skipped_pose_counts(st, n_traj):
                 n_pred_cand=0, n_true_cand=0, n_poses_skipped=1, active=0)
 
 
+def gpu_failure_instances(st, pose, failures):
+    """Rebuild the full verified-but-contact geometry for the GPU backend.
+
+    ``failures`` is the list of ``(traj_idx, motion_idx, unsafe)`` triples the GPU evaluator
+    flagged. We transform this pose's capsules once and assemble the same instance dicts
+    ``run_pose_pure`` writes for ``--save_failures``, so both backends produce identical dumps.
+    """
+    if not failures:
+        return []
+    rot_t, tvec = pose_rt(pose)
+    p1r = st.p1 @ rot_t + tvec
+    p2r = st.p2 @ rot_t + tvec
+    pose_arr = np.asarray(pose, dtype=np.float64)
+    out = []
+    for traj_idx, m, unsafe in failures:
+        rows, frow_rows, valid, _, _, _, _, _, _, t_ms = st.traj_meta[traj_idx]
+        tp_pred = np.stack([st.tp_start[rows], st.tp_end[rows]], axis=1)
+        rob_pred = dict(p1=p1r[rows], p2=p2r[rows], r=st.rr[rows], speed=st.spd[rows], tp=tp_pred)
+        fr = frow_rows[valid]
+        rob_true = dict(p1=p1r[fr], p2=p2r[fr], r=st.rr[fr], speed=st.spd[fr],
+                        tp=np.stack([st.tp_start[fr], st.tp_end[fr]], axis=1))
+        out.append(dict(
+            pose=pose_arr, t_ms=int(t_ms), motion_idx=int(m), unsafe=bool(unsafe),
+            robot_pred=rob_pred, robot_true=rob_true,
+            human_pred_centers=st.pred_c[m], human_pred_radii=st.pred_r[m],
+            human_true_centers=st.true_c[m], human_true_radii=st.true_r[m],
+            human_input=st.human_input[m], horizon_times=st.horizon_times,
+        ))
+    return out
+
+
 # Set in the parent before forking workers; inherited (copy-on-write) so the GB-scale human
 # trees/hierarchy are shared, not pickled, to each worker.
 _WORKER_ST = None
@@ -627,8 +658,8 @@ def main():
     parser.add_argument("--backend", type=str, default="cpu", choices=["cpu", "gpu"],
                         help="Fine-phase (culling levels 4-5 + narrow phase) compute backend. "
                              "'cpu' = the cKDTree path; 'gpu' = a dense JAX brute force over the "
-                             "level-3-active motions (levels 1-3 culling stays on the CPU). The GPU "
-                             "backend reports counts only -- it does not dump --save_failures.")
+                             "level-3-active motions (levels 1-3 culling stays on the CPU). Both "
+                             "backends support --save_failures.")
     parser.add_argument("--gpu_dtype", type=str, default="float32", choices=["float32", "float64"],
                         help="Compute precision for the GPU backend. float32 is fast on the 5090; "
                              "float64 matches the CPU oracle bit-for-bit (use for --parity).")
@@ -874,13 +905,20 @@ def main():
               f"({_time.time() - t0:.0f}s)")
 
     if args.backend == "gpu":
-        if args.save_failures:
-            print("  NOTE: --save_failures is ignored for --backend gpu (counts-only backend).")
         from conformal_human_motion_prediction.examples.shield_gpu import GpuShieldEvaluator
-        ev = GpuShieldEvaluator(st, n_traj, dtype=args.gpu_dtype, a_chunk=args.gpu_a_chunk)
+        ev = GpuShieldEvaluator(st, n_traj, dtype=args.gpu_dtype, a_chunk=args.gpu_a_chunk,
+                                capture_failures=bool(args.save_failures))
         for pidx, pose in enumerate(poses):
             skip, ai = pose_active_set(st, pose)
-            cc = _skipped_pose_counts(st, n_traj) if skip else ev.eval_active(pose, ai)
+            if skip:
+                cc = _skipped_pose_counts(st, n_traj)
+            else:
+                cc = ev.eval_active(pose, ai)
+                if args.save_failures and cc.get("failures"):
+                    # Reconstruct full geometry for the (rare) verified-but-contact pairs the GPU
+                    # flagged; cap per pose like the CPU path does.
+                    cc["instances"] = gpu_failure_instances(
+                        st, pose, cc["failures"][:args.max_failures])
             accumulate(pidx, cc)
     elif n_workers > 1:
         global _WORKER_ST

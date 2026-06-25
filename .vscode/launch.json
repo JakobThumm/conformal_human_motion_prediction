@@ -483,27 +483,19 @@
         "--pose_z_offset", "0.2",
         "--seed", "0",
         "--mask_ood",
-
-        // ---- Fine-phase backend (culling levels 4-5 + narrow phase) ----
-        // gpu = dense JAX brute force over the level-3-active motions (levels 1-3 still cull on the
-        // CPU). ~90x faster per active pose than the cKDTree path. float32 is fine: it matches the
-        // CPU oracle's SAFETY verdict (verified&contact / verified&unsafe) exactly; only ~0.01% of
-        // the diagnostic contact/verified totals jitter at the dist==radius boundary.
-        "--backend", "gpu",
+        "--backend", "gpu",  // Run verification of heavy intersection poses on GPU.
         "--gpu_dtype", "float32",
-
         // --gpu_a_chunk = active motions per GPU launch. Peak VRAM ~ a_chunk * max-capsules-per-step
         // * n_joints. The kernel syncs once per pose, so larger = fewer dispatches = faster, until
         // it no longer fits. Tune to the GPU you have:
         //   * FREE GPU            -> "512" (or "1024"): fastest steady-state (~0.25 s/active pose).
         //   * SHARED/CONTESTED GPU-> "128": fits in ~1-2 GB free VRAM; a touch slower, larger never OOMs.
-        "--gpu_a_chunk", "512"
-
-        // ---- CPU-backend-only options (IGNORED when --backend gpu) ----
-        // "--backend", "cpu", "--num_workers", "24",   // multi-core cKDTree path instead of the GPU.
-        // "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
-        //     // per-instance failure-geometry dump: CPU backend only (the GPU backend reports counts).
-
+        "--gpu_a_chunk", "128",
+        // Per-instance failure-geometry dump -- works on BOTH backends (the GPU flags the rare
+        // verified-but-contact pairs; the CPU rebuilds their geometry). --max_failures caps per pose.
+        "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
+        // ---- CPU backend instead of the GPU (--num_workers is CPU-only) ----
+        // "--backend", "cpu", "--num_workers", "24",
         // ---- Verify GPU == CPU (optional) ----
         // "--parity", "8", "--gpu_dtype", "float64"    // run both backends on 8 poses, assert equal counts.
       ]
