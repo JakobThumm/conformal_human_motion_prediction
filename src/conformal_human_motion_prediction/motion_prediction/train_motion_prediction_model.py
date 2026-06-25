@@ -206,9 +206,6 @@ class TrainingConfig:
         augment: bool = False,
 
         # Coverage-improvement options (default OFF -> original pipeline unchanged)
-        # P1: input-noise augmentation drawn from the reported input covariance (Stage 4 only).
-        input_noise_scale: float = 0.0,   # >0 enables; scale (>=1) on chol(Sigma_in) noise
-        input_noise_prob: float = 1.0,    # fraction of each batch to augment
         # P2: pinball/quantile loss on the deployed set radius (stages 2/3/4).
         lambda_pinball: float = 0.0,      # >0 enables; weight against the Gaussian NLL
         set_likelihood: float = 0.995,    # target coverage tau (matches SET_LIKELIHOOD)
@@ -262,8 +259,6 @@ class TrainingConfig:
         self.augment = augment
 
         # Coverage-improvement options
-        self.input_noise_scale = input_noise_scale
-        self.input_noise_prob = input_noise_prob
         self.lambda_pinball = lambda_pinball
         self.set_likelihood = set_likelihood
         self.tail_reweight_gamma = tail_reweight_gamma
@@ -489,41 +484,6 @@ def update_optimizer_for_stage(
     return new_state, lr_fn
 
 
-def _augment_input_with_noise(input_pose, rng, step, noise_scale, noise_prob):
-    """Perturb the input pose block by noise sampled from the reported per-keypoint covariance.
-
-    Only applies when the input carries the per-keypoint covariance block (Stage 4 layout,
-    ``input_dim = J*3 + J*9``). The covariance block itself is left untouched so the head still
-    sees the reported input uncertainty Sigma_in; only the measured positions are jittered by
-    ``noise = noise_scale * chol(Sigma_in) @ z``, z ~ N(0, I). This teaches the head to widen its
-    output covariance when the input is uncertain (targets M1) and populates the data-starved
-    high-input-uncertainty tail. Targets are never touched.
-    """
-    pose_dim = N_JOINTS * 3
-    if input_pose.shape[-1] <= pose_dim or noise_scale <= 0.0:
-        return input_pose
-    B, T = input_pose.shape[0], input_pose.shape[1]
-    poses = input_pose[..., :pose_dim]
-    cov_block = input_pose[..., pose_dim:]
-    cov_mat = cov_block.reshape(B, T, N_JOINTS, 3, 3)
-    # Symmetrize + jitter the diagonal so the Cholesky is well-defined even for near-singular joints.
-    cov_mat = 0.5 * (cov_mat + jnp.swapaxes(cov_mat, -1, -2))
-    cov_mat = cov_mat + 1e-6 * jnp.eye(3)
-    Lc = jnp.linalg.cholesky(cov_mat)
-    Lc = jnp.where(jnp.isfinite(Lc), Lc, 0.0)  # drop any failed factorizations
-
-    key = jax.random.fold_in(rng, step)
-    key_z, key_b = jax.random.split(key)
-    z = jax.random.normal(key_z, (B, T, N_JOINTS, 3))
-    noise = noise_scale * jnp.einsum('stjac,stjc->stja', Lc, z)
-    if noise_prob < 1.0:
-        # Per-sample on/off so a fraction of the batch stays at the reported (un-jittered) input.
-        keep = (jax.random.uniform(key_b, (B, 1, 1, 1)) < noise_prob).astype(noise.dtype)
-        noise = noise * keep
-    poses = poses + noise.reshape(B, T, pose_dim)
-    return jnp.concatenate([poses, cov_block], axis=-1)
-
-
 def _tail_reweight_weights(input_pose, seq_len_output, gamma, w_max, set_likelihood):
     """P4: per-(B,T,J) loss weights that up-weight high-input-uncertainty joint-frames.
 
@@ -548,17 +508,14 @@ def _tail_reweight_weights(input_pose, seq_len_output, gamma, w_max, set_likelih
 
 
 @partial(jax.jit, static_argnames=['use_uncertainty_head', 'lambda_weight', 'freeze_backbone',
-                                    'input_noise_scale', 'input_noise_prob', 'lambda_pinball',
-                                    'set_likelihood', 'tail_reweight_gamma', 'tail_reweight_max'])
+                                    'lambda_pinball', 'set_likelihood',
+                                    'tail_reweight_gamma', 'tail_reweight_max'])
 def train_step(
     state: TrainState,
     batch: Tuple[jnp.ndarray, jnp.ndarray],
     use_uncertainty_head: bool,
     lambda_weight: float,
     freeze_backbone: bool = False,
-    rng: Optional[jnp.ndarray] = None,
-    input_noise_scale: float = 0.0,
-    input_noise_prob: float = 1.0,
     lambda_pinball: float = 0.0,
     set_likelihood: float = 0.995,
     tail_reweight_gamma: float = 0.0,
@@ -572,9 +529,6 @@ def train_step(
         use_uncertainty_head: Whether to use uncertainty head in loss
         lambda_weight: Weight for pose loss when using uncertainty head
         freeze_backbone: If True, only train uncertainty_head parameters (Stage 2)
-        rng: Base PRNG key for input-noise augmentation (folded with the step counter)
-        input_noise_scale: P1 -- scale (>=1) on the input-covariance noise; 0 disables augmentation
-        input_noise_prob: P1 -- fraction of each batch to augment
         lambda_pinball: P2 -- weight on the set-radius pinball/quantile loss (0 disables it)
         set_likelihood: target coverage tau for the pinball term
         tail_reweight_gamma: P4 -- exponent on the per-joint input-uncertainty loss weight (0 disables)
@@ -584,12 +538,6 @@ def train_step(
         Updated state and metrics
     """
     input_pose, target_pose = batch
-
-    # P1: input-noise augmentation from the reported input covariance (Stage-4 layout only).
-    if input_noise_scale > 0.0 and rng is not None:
-        input_pose = _augment_input_with_noise(
-            input_pose, rng, state.step, input_noise_scale, input_noise_prob
-        )
 
     # P4: per-joint-frame tail reweighting from the reported input uncertainty (Stage-4 layout only).
     seq_len_output = target_pose.reshape(target_pose.shape[0], -1, N_JOINTS, 3).shape[1]
@@ -824,7 +772,6 @@ def train_epoch(
     epoch: int,
     config: TrainingConfig,
     lr_fn,
-    rng: Optional[jnp.ndarray] = None,
 ) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
     """Train for one epoch."""
     epoch_metrics = []
@@ -832,15 +779,12 @@ def train_epoch(
     use_rle = getattr(config, 'use_rle_model', False)
     step_fn = train_step_rle if use_rle else train_step
 
-    # P1/P2 extra knobs apply only to the (non-RLE) DCTPoseTransformer step. Input-noise
-    # augmentation (P1) needs the Stage-4 covariance block, so it is gated to stage == 4.
+    # P2/P4 extra knobs apply only to the (non-RLE) DCTPoseTransformer step. Tail reweighting (P4)
+    # needs the Stage-4 covariance block, so it is gated to stage == 4.
     if use_rle:
         extra = {}
     else:
         extra = dict(
-            rng=rng,
-            input_noise_scale=getattr(config, 'input_noise_scale', 0.0) if stage == 4 else 0.0,
-            input_noise_prob=getattr(config, 'input_noise_prob', 1.0),
             lambda_pinball=getattr(config, 'lambda_pinball', 0.0),
             set_likelihood=getattr(config, 'set_likelihood', 0.995),
             tail_reweight_gamma=getattr(config, 'tail_reweight_gamma', 0.0) if stage == 4 else 0.0,
@@ -1196,14 +1140,12 @@ def train_stage(
     start_epoch: int = 0,
     verify_freezing: bool = False,
     trial: "Optional[optuna.Trial]" = None,
-    rng: Optional[jnp.ndarray] = None,
 ) -> TrainState:
     """Train a single stage.
 
     Args:
         verify_freezing: If True, verify parameter freezing after first batch (for debugging)
         trial: Optional Optuna trial for hyperparameter optimization
-        rng: Base PRNG key forwarded to train_epoch for input-noise augmentation (P1)
     """
     stage_names = {
         1: "Pose Only",
@@ -1226,7 +1168,7 @@ def train_stage(
     for epoch in range(start_epoch, n_epochs):
         # Train
         state, train_metrics = train_epoch(
-            state, train_loader, stage, epoch, config, lr_fn, rng=rng
+            state, train_loader, stage, epoch, config, lr_fn
         )
 
         # Evaluate
@@ -1557,8 +1499,6 @@ def main(args):
             data_path=args.data_path,
             seed=args.seed,
             augment=args.augment,
-            input_noise_scale=args.input_noise_scale,
-            input_noise_prob=args.input_noise_prob,
             lambda_pinball=args.lambda_pinball,
             set_likelihood=args.set_likelihood,
             tail_reweight_gamma=args.tail_reweight_gamma,
@@ -1582,8 +1522,6 @@ def main(args):
     # Set random seeds
     np.random.seed(config.seed)
     rng = jax.random.PRNGKey(config.seed)
-    # Separate key stream for input-noise augmentation (P1) so it is independent of init.
-    aug_rng = jax.random.PRNGKey(config.seed + 12345)
 
     # Load data
     print("Loading data...")
@@ -1642,9 +1580,7 @@ def main(args):
             n_epochs=config.stage1_epochs,
             config=config,
             checkpoint_dir=checkpoint_dir,
-            lr_fn=lr_fn,
-            rng=aug_rng,
-        )
+            lr_fn=lr_fn,        )
 
     if args.stage <= 2:
         print("\nStarting Stage 2: Uncertainty Head Training")
@@ -1659,9 +1595,7 @@ def main(args):
             n_epochs=config.stage2_epochs,
             config=config,
             checkpoint_dir=checkpoint_dir,
-            lr_fn=lr_fn,
-            rng=aug_rng,
-        )
+            lr_fn=lr_fn,        )
 
     if args.stage <= 3:
         print("\nStarting Stage 3: End-to-End Finetuning")
@@ -1676,9 +1610,7 @@ def main(args):
             n_epochs=config.stage3_epochs,
             config=config,
             checkpoint_dir=checkpoint_dir,
-            lr_fn=lr_fn,
-            rng=aug_rng,
-        )
+            lr_fn=lr_fn,        )
 
     if args.stage <= 4:
         print("\n" + "=" * 60)
@@ -1745,9 +1677,7 @@ def main(args):
             n_epochs=config.stage4_epochs,
             config=config_stage4,
             checkpoint_dir=checkpoint_dir,
-            lr_fn=lr_fn_stage4,
-            rng=aug_rng,
-        )
+            lr_fn=lr_fn_stage4,        )
 
         print("\nStage 4 training completed!")
 
@@ -1828,11 +1758,6 @@ if __name__ == "__main__":
                         help="Number of samples to use from dataset (for debugging)")
 
     # Coverage-improvement options (default OFF -> original pipeline unchanged)
-    parser.add_argument("--input_noise_scale", type=float, default=0.0,
-                        help="P1: scale (>=1) on input-covariance noise augmentation (Stage 4). "
-                             "0 disables it.")
-    parser.add_argument("--input_noise_prob", type=float, default=1.0,
-                        help="P1: fraction of each batch to perturb with input-covariance noise.")
     parser.add_argument("--lambda_pinball", type=float, default=0.0,
                         help="P2: weight on the set-radius pinball/quantile loss (stages 2/3/4). "
                              "0 disables it.")
