@@ -8,7 +8,10 @@ from scipy.stats import chi2
 from pathlib import Path
 
 from conformal_human_motion_prediction.motion_prediction.h36m_settings import V_HUMAN_ISO
-from conformal_human_motion_prediction.motion_prediction.inference_helper import calibrate_covariance_matrices
+from conformal_human_motion_prediction.motion_prediction.inference_helper import (
+    calibrate_covariance_matrices, conformal_set_radius, load_conformal_calibrator,
+    DEFAULT_CONFORMAL_CALIBRATOR,
+)
 from conformal_human_motion_prediction.utils.eval_utils import compute_sara_predictions, convert_covariance_matrices_to_set, evaluate_uncertainty_coverage_with_covariance, print_coverage_stats, print_simple_coverage_stats_sara, save_coverage_stats_sara, simple_coverage_stats_sara
 
 
@@ -42,6 +45,14 @@ def main():
         type=float,
         default=25.0,
         help="The FPS of the camera"
+    )
+    parser.add_argument(
+        "--conformal_calibrator",
+        type=str,
+        default=DEFAULT_CONFORMAL_CALIBRATOR,
+        help="Path to a conditional-conformal calibrator .npz (from conformal_calibration). When "
+             "present, the reported spherical reachable set uses it instead of the affine "
+             "calibration. Set to '' / 'none' (or a missing path) to use the affine calibration.",
     )
 
     args = parser.parse_args()
@@ -86,7 +97,23 @@ def main():
     last_input_poses = np.array(results['last_input_poses'])[:n_plot]
 
     N, T, J, _ = predictions.shape
+    # Keep the RAW model covariance and the last-input-frame covariance for the conditional-conformal
+    # set (computed from raw cov + input uncertainty), before the affine calibration overwrites cov
+    # and before the cov block is stripped from last_input_poses below.
+    raw_covariance_matrices = covariance_matrices.copy()
+    input_covariances = (np.reshape(last_input_poses[..., J*3:J*3 + J*9], [N, J, 3, 3])
+                         if last_input_poses.shape[-1] >= J*3 + J*9 else None)
     last_input_poses = np.reshape(last_input_poses[..., :J*3], [N, J, 3])
+
+    calibrator = None
+    cc = args.conformal_calibrator
+    if cc and cc.lower() != "none" and os.path.exists(cc) and input_covariances is not None:
+        calibrator = load_conformal_calibrator(cc)
+        print(f"Using conditional-conformal calibrator {cc} (target {calibrator['level']:.4f}) "
+              f"for the spherical reachable set.")
+    else:
+        print("Using affine calibration for the spherical reachable set "
+              f"(conformal calibrator: {cc or 'disabled'}).")
 
     # Filter out OOD samples
     # is_ood = ood_scores > 6e5
@@ -133,16 +160,22 @@ def main():
     # Print coverage statistics
     print_coverage_stats(coverage_stats)
 
-    radius_predictions = convert_covariance_matrices_to_set(
-        covariance_matrices,
-        likelihood=SET_LIKELIHOOD
-    )
+    if calibrator is not None:
+        # Conditional conformal: r = max(r_model(raw cov) + q_hat(joint, frame, input-unc bin), 0).
+        radius_predictions = conformal_set_radius(raw_covariance_matrices, input_covariances, calibrator)
+    else:
+        radius_predictions = convert_covariance_matrices_to_set(
+            covariance_matrices,
+            likelihood=SET_LIKELIHOOD
+        )
     coverage_stats_predictions, _ = simple_coverage_stats_sara(
         predictions=predictions,
         radius=radius_predictions,
         targets=targets,
     )
-    print(f"Predicted spherical reachable set coverage stats for {SET_LIKELIHOOD} likelihood:")
+    _set_level = calibrator["level"] if calibrator is not None else SET_LIKELIHOOD
+    _set_kind = "conditional conformal" if calibrator is not None else "affine"
+    print(f"Predicted spherical reachable set coverage stats ({_set_kind}) for {_set_level} likelihood:")
     print_simple_coverage_stats_sara(coverage_stats_predictions)
     save_coverage_stats_sara(coverage_stats_predictions, filename="sara_coverage_predictions", output_dir=output_dir)
 

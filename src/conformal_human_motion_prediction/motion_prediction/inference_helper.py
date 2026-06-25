@@ -146,6 +146,7 @@ def run_motion_prediction(
     calibration_factors: Optional[Sequence[float]],
     n_correct_poses_required: int,
     set_likelihood: float,
+    conformal_calibrator: Optional[dict] = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, bool, bool, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Run one step of motion prediction: inference, OOD scoring, calibration, buffer update.
 
@@ -225,9 +226,15 @@ def run_motion_prediction(
         n_correct_poses_required=n_correct_poses_required,
     )
 
-    motion_set_radius = convert_covariance_matrices_to_set(
-        motion_cov_predicted, likelihood=set_likelihood
-    )
+    if conformal_calibrator is not None:
+        # Conditional-conformal set radius from RAW model cov + last-input-frame uncertainty
+        # (replaces the affine-calibrated set; the affine cov is still used for the buffer/OOD path).
+        input_cov = np.asarray(covariance_buffer).reshape(input_horizon_length, n_joints, 3, 3)[-1]
+        motion_set_radius = conformal_set_radius(motion_cov_uncalibrated, input_cov, conformal_calibrator)
+    else:
+        motion_set_radius = convert_covariance_matrices_to_set(
+            motion_cov_predicted, likelihood=set_likelihood
+        )
 
     return (
         motion_prediction_buffer,
@@ -263,6 +270,7 @@ def run_motion_prediction_batched(
     set_likelihood: float,
     pose_buffer_good_batch: jnp.ndarray,
     frame_counter: int,
+    conformal_calibrator: Optional[dict] = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, List[bool], jnp.ndarray, jnp.ndarray]:
     """Run motion prediction for a batch of B intermediate pose-buffer states in one model call.
 
@@ -364,9 +372,14 @@ def run_motion_prediction_batched(
         valid_motions.append(valid_motion)
 
     # Batch-convert covariances to set radii [B, P, J]
-    motion_set_radii = convert_covariance_matrices_to_set(
-        motion_cov_calibrated, likelihood=set_likelihood
-    )
+    if conformal_calibrator is not None:
+        # Conditional-conformal set from RAW model cov + each buffer's last-input-frame uncertainty.
+        input_cov = np.asarray(covariance_buffers).reshape(B, T, n_joints, 3, 3)[:, -1]  # [B,J,3,3]
+        motion_set_radii = conformal_set_radius(motion_cov_predicted, input_cov, conformal_calibrator)
+    else:
+        motion_set_radii = convert_covariance_matrices_to_set(
+            motion_cov_calibrated, likelihood=set_likelihood
+        )
 
     return (
         motion_prediction_buffer,
@@ -412,6 +425,71 @@ def calibrate_covariance_matrices(
     covariance_matrices = covariance_matrices * scaling_factors_times
     covariance_matrices = covariance_matrices * scaling_factors_joints
     return covariance_matrices
+
+
+# --------------------------------------------------------------------------- conditional conformal
+# Conditional (Mondrian/CQR) conformal calibration of the set radius, conditioned on
+# (joint x horizon-frame x input-uncertainty bin). Fitted offline by
+# ``motion_prediction.conformal_calibration`` and saved as an .npz; applied here as a drop-in
+# replacement for the affine ``calibrate_covariance_matrices`` + ``convert_..._to_set`` pair.
+# See that module for the rationale (the affine calibration cannot fix the input-uncertainty- and
+# joint-conditional under-coverage). Default location written by the fitter:
+DEFAULT_CONFORMAL_CALIBRATOR = "results/motion_prediction/conformal_calibration/conformal_calibrator.npz"
+
+
+def load_conformal_calibrator(path):
+    """Load a saved conditional-conformal calibrator .npz into the dict the apply fns expect."""
+    d = np.load(path)
+    return dict(bin_edges=np.asarray(d["bin_edges"], dtype=np.float64),
+                q_grid=np.asarray(d["q_grid"], dtype=np.float64),
+                B=int(d["B"]), level=float(d["level"]), J=int(d["J"]), T=int(d["T"]))
+
+
+def conformal_set_radius(model_cov, input_cov, calibrator):
+    """Conditional-conformal spherical set radius (mm) from RAW model + input covariance.
+
+    Drop-in replacement for ``convert_covariance_matrices_to_set(calibrate_covariance_matrices(.))``.
+    Conditions each (joint, frame) on the last input frame's per-joint uncertainty:
+        r_cal = max(r_model + q_hat(joint, frame, input_unc_bin), 0).
+
+    Args:
+        model_cov: raw model covariance, [..., T, J, 3, 3] (mm^2); accepts batched [N,T,J,3,3] or
+            a single [T,J,3,3].
+        input_cov: last input frame per-joint covariance, [..., J, 3, 3] (mm^2), leading dims
+            matching ``model_cov`` (or absent for the single case).
+        calibrator: dict from ``load_conformal_calibrator``.
+    Returns:
+        radius [..., T, J] in mm (same leading shape as ``model_cov`` minus the 3x3).
+    """
+    mc = np.asarray(model_cov, dtype=np.float64)
+    ic = np.asarray(input_cov, dtype=np.float64)
+    single = (mc.ndim == 4)
+    if single:
+        mc, ic = mc[None], ic[None]
+    N, T, J = mc.shape[:3]
+    level = calibrator["level"]
+    r_model = np.asarray(convert_covariance_matrices_to_set(mc, level), dtype=np.float64)   # [N,T,J] mm
+    in_set = np.asarray(convert_covariance_matrices_to_set(ic, level), dtype=np.float64) / 1000.0  # [N,J] m
+    in_TJ = np.repeat(in_set[:, None, :], T, axis=1)                                         # [N,T,J] m
+    b = np.clip(np.searchsorted(calibrator["bin_edges"], in_TJ, side="right"), 0, calibrator["B"] - 1)
+    jj = np.broadcast_to(np.arange(J)[None, None, :], (N, T, J))
+    tt = np.broadcast_to(np.arange(T)[None, :, None], (N, T, J))
+    r = np.maximum(r_model + calibrator["q_grid"][jj, tt, b], 0.0)                           # [N,T,J] mm
+    return r[0] if single else r
+
+
+def calibrated_set_radius(model_cov, input_cov, conformal_calibrator=None,
+                          calibration_ct=None, calibration_it=None, calibration_factors=None,
+                          set_likelihood=None):
+    """Set radius (mm) via conditional conformal if a calibrator is given, else affine fallback.
+
+    This is the single boundary every consumer should call so the calibration method is swappable.
+    ``input_cov`` is only needed for the conformal path (pass None for affine).
+    """
+    if conformal_calibrator is not None:
+        return conformal_set_radius(model_cov, input_cov, conformal_calibrator)
+    cov = calibrate_covariance_matrices(model_cov, calibration_ct, calibration_it, calibration_factors)
+    return convert_covariance_matrices_to_set(cov, likelihood=set_likelihood)
 
 
 def compute_human_occupancies(

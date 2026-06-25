@@ -11,7 +11,10 @@ from torch.utils.data import DataLoader
 import jax.numpy as jnp
 from tqdm import tqdm
 from conformal_human_motion_prediction.pose_estimation.inference_helper import initialize_jax_models
-from conformal_human_motion_prediction.motion_prediction.inference_helper import calibrate_covariance_matrices, predict_poses
+from conformal_human_motion_prediction.motion_prediction.inference_helper import (
+    calibrate_covariance_matrices, predict_poses, conformal_set_radius, load_conformal_calibrator,
+    DEFAULT_CONFORMAL_CALIBRATOR,
+)
 from conformal_human_motion_prediction.utils.eval_utils import (
     compute_sara_predictions,
     convert_covariance_matrices_to_set,
@@ -186,7 +189,16 @@ def main():
     print("================================")
     predictions = np.array(predictions)
     targets = np.array(targets)
-    last_input_poses = np.array(last_input_poses)[..., :N_JOINTS * 3].reshape(-1, N_JOINTS, 3)
+    # Last-input-frame covariance (for the conditional-conformal set) before stripping the cov block.
+    _li_full = np.array(last_input_poses)
+    input_covariances = (_li_full[..., N_JOINTS * 3:N_JOINTS * 3 + N_JOINTS * 9].reshape(-1, N_JOINTS, 3, 3)
+                         if _li_full.shape[-1] >= N_JOINTS * 3 + N_JOINTS * 9 else None)
+    last_input_poses = _li_full[..., :N_JOINTS * 3].reshape(-1, N_JOINTS, 3)
+    conformal_calibrator = None
+    if os.path.exists(DEFAULT_CONFORMAL_CALIBRATOR) and input_covariances is not None:
+        conformal_calibrator = load_conformal_calibrator(DEFAULT_CONFORMAL_CALIBRATOR)
+        print(f"Using conditional-conformal calibrator {DEFAULT_CONFORMAL_CALIBRATOR} "
+              f"(target {conformal_calibrator['level']:.4f}) for the conformal prediction sets.")
     # Increase covariance for certain times and joints
     covariance_matrices_calibrated = calibrate_covariance_matrices(
         covariance_matrices=covariance_matrices,
@@ -200,9 +212,15 @@ def main():
         pred_poses=predictions, true_poses=targets, cov_matrices=covariance_matrices_calibrated
     )
     print_coverage_stats(coverage_stats_calibrated)
-    radius_conformal_prediction_sets = convert_covariance_matrices_to_set(
-        np.array(covariance_matrices_calibrated), likelihood=SET_LIKELIHOOD
-    )
+    if conformal_calibrator is not None:
+        # Conditional conformal set from RAW model covariance + input uncertainty (replaces affine).
+        radius_conformal_prediction_sets = conformal_set_radius(
+            np.array(covariance_matrices), input_covariances, conformal_calibrator
+        )
+    else:
+        radius_conformal_prediction_sets = convert_covariance_matrices_to_set(
+            np.array(covariance_matrices_calibrated), likelihood=SET_LIKELIHOOD
+        )
     coverage_stats_conformal_prediction_sets, _ = simple_coverage_stats_sara(
         predictions=predictions,
         radius=radius_conformal_prediction_sets,

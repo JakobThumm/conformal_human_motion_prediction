@@ -442,6 +442,27 @@
       ]
     },
     {
+      "name": "Conformal Calibration (tune confidence)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "src/conformal_human_motion_prediction/motion_prediction/conformal_calibration.py",
+      "console": "integratedTerminal",
+      "env": {
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "JAX_PLATFORMS": "cpu"  // pure numpy/scipy; keep off the shared GPU
+      },
+      "args": [
+        // Tuning phase: split validation 50/50 (calib/test) so coverage is reported honestly.
+        // Final step: drop --calib_frac and pass --calib_file <S11> --test_file <S5> instead.
+        "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
+        "--calib_frac", "0.5",
+        // >>> Play with the target confidence here (overrides SET_LIKELIHOOD). <<<
+        "--likelihood", "0.9990"
+        // Other knobs you can add: --n_bins 8  --tail_edges 0.3 0.5 0.75  --n_min 200
+        //                         --base raw|affine  --no-monotone  --seed 0
+      ]
+    },
+    {
       "name": "Simulate Robot Shield",
       "type": "debugpy",
       "request": "launch",
@@ -453,10 +474,10 @@
       "args": [
         // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
         "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
-        "--num_robot_poses", "512",
-        "--pose_radius", "5.0",
+        "--num_robot_poses", "10000",
+        "--pose_radius", "7.0",
         "--pose_z_offset", "0.2",
-        "--num_workers", "24",  // raise to parallelize poses; child workers are not debugged
+        "--num_workers", "24",
         "--seed", "0",
         "--mask_ood",
         "--save_failures", "results/motion_prediction/shield_failures.npy",

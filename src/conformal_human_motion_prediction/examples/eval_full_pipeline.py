@@ -16,7 +16,25 @@ from tqdm import tqdm
 import cloudpickle
 import jax.numpy as jnp
 
-from conformal_human_motion_prediction.motion_prediction.inference_helper import run_motion_prediction
+from conformal_human_motion_prediction.motion_prediction.inference_helper import (
+    run_motion_prediction, load_conformal_calibrator, DEFAULT_CONFORMAL_CALIBRATOR,
+)
+
+# Conditional-conformal calibrator for the motion set radius (replaces affine calibration); loaded
+# once, falls back to affine when the file is absent.
+_MOTION_CALIBRATOR = "UNSET"
+
+
+def _get_motion_calibrator():
+    global _MOTION_CALIBRATOR
+    if _MOTION_CALIBRATOR == "UNSET":
+        _MOTION_CALIBRATOR = (load_conformal_calibrator(DEFAULT_CONFORMAL_CALIBRATOR)
+                              if os.path.exists(DEFAULT_CONFORMAL_CALIBRATOR) else None)
+        if _MOTION_CALIBRATOR is not None:
+            print(f"[motion] conditional-conformal calibrator loaded (target {_MOTION_CALIBRATOR['level']:.4f})")
+        else:
+            print("[motion] no conformal calibrator found -> affine calibration")
+    return _MOTION_CALIBRATOR
 from conformal_human_motion_prediction.utils.visualization import plot_ood_score_histogram
 from conformal_human_motion_prediction.utils.eval_utils import (
     compute_sara_predictions,
@@ -292,6 +310,7 @@ def main():
                         calibration_factors=COV_CALIBRATION_FACTORS,
                         n_correct_poses_required=args.n_correct_poses_required,
                         set_likelihood=SET_LIKELIHOOD,
+                        conformal_calibrator=_get_motion_calibrator(),
                     )
                 motions_cov_predicted_uncalibrated.append(motion_cov_uncalibrated)
                 # Store motion predictions (raw model output, not the buffer)

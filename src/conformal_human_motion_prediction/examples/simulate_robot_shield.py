@@ -52,6 +52,9 @@ from scipy.spatial import cKDTree
 from conformal_human_motion_prediction.motion_prediction.inference_helper import (
     calibrate_covariance_matrices,
     compute_human_occupancies,
+    conformal_set_radius,
+    load_conformal_calibrator,
+    DEFAULT_CONFORMAL_CALIBRATOR,
 )
 from conformal_human_motion_prediction.utils.eval_utils import (
     convert_covariance_matrices_to_set,
@@ -154,7 +157,8 @@ def load_robot_trajectories(csv_path, origin):
 
 def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
                        set_likelihood, sara_meas_unc, human_radius,
-                       calibrate, cov_ct, cov_it, cov_factors, max_samples, rng):
+                       calibrate, cov_ct, cov_it, cov_factors, max_samples, rng,
+                       conformal_calibrator=None):
     """Build per-step human occupancy spheres (centers in m, radii in m).
 
     Returns horizon_times [S], pred_centers [M,S,J,3], pred_r [M,S,J],
@@ -184,24 +188,31 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
         idx.sort()
         print(f"  sub-sampled to {idx.size} human samples")
 
-    # Raw motion-prediction input (the model's last observed pose vector) kept for debugging.
+    # Raw motion-prediction input (the model's full last-frame vector [pose | input-cov]) kept for
+    # debugging and for the conditional-conformal calibrator (which needs the input covariance).
     human_input = np.asarray(results["last_input_poses"], dtype=np.float64)[idx]
     predictions, targets, cov, last_input = (
         predictions[idx], targets[idx], cov[idx], last_input[idx],
     )
+    M = idx.size
 
-    if calibrate:
-        cov = calibrate_covariance_matrices(
-            covariance_matrices=cov,
-            constant_time_factor=cov_ct,
-            increase_time_factor=cov_it,
-            joint_calibration_factors=cov_factors,
-        )
-    # Conformal sphere radius from covariance, mm -> m.
-    radius_pred = convert_covariance_matrices_to_set(cov, likelihood=set_likelihood) / 1000.0
+    # Predicted-horizon set radius (mm -> m). Prefer the conditional-conformal calibrator (replaces
+    # the affine calibration, which under-covers conditional on input uncertainty / joint); fall back
+    # to the affine calibration when no calibrator is supplied.
+    if conformal_calibrator is not None:
+        input_cov = human_input[:, J * 3: J * 3 + J * 3 * 3].reshape(M, J, 3, 3)  # last input frame cov
+        radius_pred = conformal_set_radius(cov, input_cov, conformal_calibrator) / 1000.0  # [M,PH,J]
+    else:
+        if calibrate:
+            cov = calibrate_covariance_matrices(
+                covariance_matrices=cov,
+                constant_time_factor=cov_ct,
+                increase_time_factor=cov_it,
+                joint_calibration_factors=cov_factors,
+            )
+        radius_pred = convert_covariance_matrices_to_set(cov, likelihood=set_likelihood) / 1000.0
 
     # Assemble step 0 (current pose) + horizon steps, convert mm -> m.
-    M = idx.size
     S = PH + 1
     pred_centers = np.empty((M, S, J, 3))
     true_centers = np.empty((M, S, J, 3))
@@ -537,7 +548,13 @@ def main():
     parser.add_argument("--mask_ood", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--mask_too_fast", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--calibrate", action=argparse.BooleanOptionalAction, default=True,
-                        help="Apply the project covariance calibration before forming the set.")
+                        help="Apply the affine covariance calibration before forming the set "
+                             "(only used as the fallback when --conformal_calibrator is unset/missing).")
+    parser.add_argument("--conformal_calibrator", type=str, default=DEFAULT_CONFORMAL_CALIBRATOR,
+                        help="Path to a conditional-conformal calibrator .npz (from "
+                             "motion_prediction.conformal_calibration). Used to form the predicted "
+                             "human set radius, replacing the affine calibration. Set to '' / 'none' "
+                             "to force the affine fallback; a missing file also falls back.")
     parser.add_argument("--overapprox", action=argparse.BooleanOptionalAction, default=True,
                         help="Use the multi-level bounding-sphere hierarchy to cull far humans.")
     parser.add_argument("--motion_group_size", type=int, default=50,
@@ -586,6 +603,22 @@ def main():
         times_ms = times_ms[: args.max_robot_timesteps]
     print(f"  {len(times_ms)} monitored trajectories, {len(robot['time'])} intervals total")
 
+    # Conditional-conformal calibrator for the predicted human set radius (replaces the affine
+    # calibration). Falls back to affine if the path is unset or the file is missing.
+    cc_path = args.conformal_calibrator
+    calibrator = None
+    if cc_path and cc_path.lower() != "none":
+        abs_cc = cc_path if os.path.isabs(cc_path) else os.path.join(root_dir, cc_path)
+        if os.path.exists(abs_cc):
+            calibrator = load_conformal_calibrator(abs_cc)
+            print(f"Using conditional-conformal calibrator {abs_cc} (target coverage "
+                  f"{calibrator['level']:.4f}); affine calibration bypassed.")
+        else:
+            print(f"WARNING: conformal calibrator {abs_cc} not found -> falling back to affine "
+                  f"calibration (--calibrate={args.calibrate}).")
+    else:
+        print(f"Conformal calibrator disabled -> using affine calibration (--calibrate={args.calibrate}).")
+
     results_file = os.path.join(root_dir, args.results_file)
     print(f"Loading human results from {results_file} ...")
     with open(results_file, "rb") as f:
@@ -594,7 +627,7 @@ def main():
         results, args.fps, args.mask_ood, args.mask_too_fast, OOD_THRESHOLD,
         SET_LIKELIHOOD, SARA_MEASUREMENT_UNCERTAINTY, HUMAN_RADIUS,
         args.calibrate, COV_CALIBRATION_CT, COV_CALIBRATION_IT, COV_CALIBRATION_FACTORS,
-        args.max_human_samples, rng,
+        args.max_human_samples, rng, conformal_calibrator=calibrator,
     )
     M, S, J, _ = pred_c.shape
     if M == 0:
