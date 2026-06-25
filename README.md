@@ -306,6 +306,46 @@ VSCode launch config in `.vscode/launch.json`):
 | `examples/debug_pose_visualization.py` / `debug_3d_pose_visualization.py` | render predicted vs GT poses |
 | `examples/debug_rgbd_2d_visualization.py` / `debug_rgbd_3d_visualization.py` | inspect RGB-D frames + predictions |
 
+### 3.4 Robot-shield safety evaluation workflow
+
+End-to-end evaluation of the motion model as a SARA-style safety shield: drop a robot into the
+recorded human scenes and measure how often the shield verifies a trajectory as safe while the
+ground truth has an (unsafe) contact. The verified-but-unsafe rate is bounded
+(Clopper-Pearson) and converted to an ISO 13849-1 PFH_D / Performance Level.
+
+The full chain, one step per artifact:
+
+1. **Train the motion model** — `motion_prediction.train_motion_prediction_model` (use the
+   **P2+P4** setup, launch config *"Train Motion Prediction Model P2+P4 (cov_p2p4, final)"*: P2
+   set-radius pinball loss + P4 tail reweighting self-calibrate the covariance). Training writes
+   only checkpoints under `models/motion_prediction/<run>/checkpoints/stage_*/`. Promote a run to
+   the deployed model with `python scripts/build_motion_models.py --run_dir
+   models/motion_prediction/<run>` (derives `final_model/` and `final_model_for_ood/`).
+2. **Predict the full eval set** — `examples.motion_prediction --split validation` saves
+   `results/motion_prediction/motion_prediction_results_<split>.cloudpickle` (predictions, targets,
+   raw covariances, input uncertainty, OOD scores). **This step is required:** training does *not*
+   emit predictions, only checkpoints. (Build the motion OOD score function first — see §2.3 *Build
+   the OOD scoring functions* — so `--enable_ood` can fill in the scores.)
+3. **Calibrate the conformal sets** — `motion_prediction.conformal_calibration --results_file <the
+   cloudpickle> --likelihood <target coverage>` fits the conditional-conformal calibrator
+   (`results/motion_prediction/conformal_calibration/conformal_calibrator.npz`).
+4. **Eval data for the shield** — the shield consumes the **raw** predictions/covariances from
+   step 2 and applies the calibrator itself, so when calibration and evaluation share a split this
+   reuses step 2's cloudpickle (no re-prediction). For an honest train/test split, predict the test
+   split separately (`--split test`) and point the shield at that cloudpickle.
+5. **Simulate the robot shield** — `examples.simulate_robot_shield --backend gpu
+   --conformal_calibrator <npz> --results_file <cloudpickle> --num_robot_poses 1000000
+   --pose_radius 10 --results_csv results/final/robot_shield/shield_results.csv` appends one summary
+   row (headline rates + PFH_D / PL per confidence) per run. Turn the CSV into a LaTeX table with
+   `generate_plots.generate_robot_shield_results`.
+
+Steps 2–5 (plus the LaTeX table, and a sweep over set likelihoods) are scripted in
+[`final_results/robot_shield_safety_results.sh`](final_results/robot_shield_safety_results.sh)
+(prerequisites: step 1 + the motion OOD score function). The shield runs the fine-phase
+intersection checks on the GPU (`--backend gpu`); levels 1–3 of the bounding-sphere culling stay on
+the CPU. `--backend cpu --num_workers N` is the reference path. Verify the two agree with
+`--parity N`.
+
 ---
 
 ## Known issues

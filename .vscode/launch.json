@@ -478,8 +478,8 @@
       "args": [
         // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
         "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
-        "--num_robot_poses", "128",   // production: ~1E6 (needed for PL_C); the GPU path culls ~85% for free.
-        "--pose_radius", "1.0",       // production: 10.0 (far poses then cull at level 1 on the CPU).
+        "--num_robot_poses", "1000000",   // production: ~1E6 (needed for PL_C); the GPU path culls ~85% for free.
+        "--pose_radius", "10.0",       // production: 10.0 (far poses then cull at level 1 on the CPU).
         "--pose_z_offset", "0.2",
         "--seed", "0",
         "--mask_ood",
@@ -490,7 +490,7 @@
         // it no longer fits. Tune to the GPU you have:
         //   * FREE GPU            -> "512" (or "1024"): fastest steady-state (~0.25 s/active pose).
         //   * SHARED/CONTESTED GPU-> "128": fits in ~1-2 GB free VRAM; a touch slower, larger never OOMs.
-        "--gpu_a_chunk", "128",
+        "--gpu_a_chunk", "2048",
         // Per-instance failure-geometry dump -- works on BOTH backends (the GPU flags the rare
         // verified-but-contact pairs; the CPU rebuilds their geometry). --max_failures caps per pose.
         "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
@@ -693,6 +693,44 @@
           "--wandb_project", "motion-prediction",
           "--use_wandb",
           "--augment"
+      ]
+    },
+    {
+      // The final/deployed setup: P2 set-radius pinball loss + P4 input-uncertainty tail
+      // reweighting, which self-calibrate the predicted covariance so its radius hits the target
+      // coverage (this is the cov_p2p4 model -> models/motion_prediction/final_model).
+      "name": "Train Motion Prediction Model P2+P4 (cov_p2p4, final)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
+      "console": "integratedTerminal",
+      "args": [
+          "--stage", "1",
+          "--data_path", "datasets/",
+          "--batch_size", "256",
+          "--d_model", "128",
+          "--nhead", "4",
+          "--num_layers", "2",
+          "--stage1_epochs", "50",
+          "--stage2_epochs", "20",
+          "--stage3_epochs", "30",
+          "--stage4_epochs", "40",
+          "--learning_rate", "0.0001",
+          "--use_lr_schedule",
+          "--lr_schedule_type", "cosine",
+          "--lr_warmup_epochs", "3",
+          "--lr_min_factor", "0.1",
+          "--weight_decay", "0.000001",
+          "--max_grad_norm", "0.6796845430167515",
+          "--augment",
+          // P2: set-radius pinball/quantile loss toward the target coverage tau (stages 2/3/4).
+          "--lambda_pinball", "1.0",
+          "--set_likelihood", "0.995",
+          // P4: reweight the loss on high input-uncertainty joints in stage 4.
+          "--tail_reweight_gamma", "1.0",
+          "--tail_reweight_max", "5.0",
+          "--wandb_project", "motion-prediction",
+          "--use_wandb"
       ]
     },
     {

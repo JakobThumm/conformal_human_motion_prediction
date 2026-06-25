@@ -126,6 +126,23 @@ def pfh_d_upper_bound(N, k, t_cycle, confidence):
     return pfc, pfc * 3600.0 / t_cycle
 
 
+def write_results_csv(path, row, fieldnames):
+    """Append one run's summary ``row`` to a CSV at ``path`` (writing the header if new).
+
+    One row per shield run, keyed by the experiment knobs (set likelihood, pose count, ...), so
+    repeated runs at different confidences accumulate into a single table that
+    ``generate_plots.generate_robot_shield_results`` turns into a LaTeX table.
+    """
+    import csv
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    new = not os.path.exists(path)
+    with open(path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        if new:
+            w.writeheader()
+        w.writerow(row)
+
+
 # --------------------------------------------------------------------------- robot CSV
 
 
@@ -623,6 +640,12 @@ def main():
                              "for offline debugging.")
     parser.add_argument("--max_failures", type=int, default=200,
                         help="Cap on saved verified-but-contact instances per pose (bounds output size).")
+    parser.add_argument("--results_csv", type=str, default=None,
+                        help="Path to a CSV file: append this run's summary (headline rates + the "
+                             "PFH_D / Performance-Level table + the experiment knobs) as one row. "
+                             "Multiple runs (e.g. different set likelihoods) accumulate into the same "
+                             "file; turn it into a LaTeX table with "
+                             "generate_plots.generate_robot_shield_results.")
     parser.add_argument("--t_cycle", type=float, default=None,
                         help="Safety-function cycle time (s); one monitored trajectory per cycle. "
                              "Default: derived from the robot planning-grid spacing. Used to "
@@ -979,10 +1002,43 @@ def main():
           f"t_cycle = {t_cycle:g} s")
     print(f"{'confidence':>10} | {'PFC_D upper (1/cyc)':>20} | {'PFH_D upper (1/h)':>18} | PL")
     print("-" * 72)
+    pfh_by_conf = {}
     for C in confidences:
         pfc, pfh = pfh_d_upper_bound(total_pairs, n_verified_unsafe, t_cycle, C)
+        pfh_by_conf[C] = (pfc, pfh, pl_from_pfh(pfh))
         print(f"{C:>10.4f} | {pfc:>20.3e} | {pfh:>18.3e} | {pl_from_pfh(pfh)}")
     print("=" * 76)
+
+    # ----------------------------------------------------------------- CSV summary (one row/run)
+    if args.results_csv:
+        set_likelihood = float(calibrator["level"]) if calibrator is not None else float(SET_LIKELIHOOD)
+        set_kind = ("conditional_conformal" if calibrator is not None
+                    else ("affine" if args.calibrate else "raw"))
+        row = dict(
+            results_file=os.path.basename(args.results_file), set_kind=set_kind,
+            set_likelihood=set_likelihood, backend=args.backend, mask_ood=args.mask_ood,
+            mask_too_fast=args.mask_too_fast, num_robot_poses=len(poses), pose_radius=args.pose_radius,
+            pose_z_offset=args.pose_z_offset, robot_stride=args.robot_stride, seed=args.seed,
+            n_trajectories=len(times_ms), n_human_samples=M, t_cycle=t_cycle,
+            total_pairs=total_pairs, n_poses_skipped=n_poses_skipped,
+            n_verified=n_verified, pct_verified=pct(n_verified, total_pairs),
+            n_contact=n_contact, pct_contact=pct(n_contact, total_pairs),
+            n_unsafe=n_unsafe, pct_unsafe=pct(n_unsafe, total_pairs),
+            n_verified_contact=n_verified_contact,
+            pct_verified_contact_of_verified=pct(n_verified_contact, n_verified),
+            n_verified_unsafe=n_verified_unsafe,
+            pct_verified_unsafe_of_verified=pct(n_verified_unsafe, n_verified),
+        )
+        for C in confidences:
+            pfc, pfh, pl = pfh_by_conf[C]
+            tag = f"{C:.4f}"
+            row[f"pfc_d_{tag}"] = pfc
+            row[f"pfh_d_{tag}"] = pfh
+            row[f"pl_{tag}"] = pl
+        out_csv = (args.results_csv if os.path.isabs(args.results_csv)
+                   else os.path.join(root_dir, args.results_csv))
+        write_results_csv(out_csv, row, fieldnames=list(row.keys()))
+        print(f"\nAppended run summary to {out_csv}")
 
 
 if __name__ == "__main__":
