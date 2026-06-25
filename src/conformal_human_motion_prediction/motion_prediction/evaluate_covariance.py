@@ -54,6 +54,12 @@ def main():
              "present, the reported spherical reachable set uses it instead of the affine "
              "calibration. Set to '' / 'none' (or a missing path) to use the affine calibration.",
     )
+    parser.add_argument(
+        "--calibrate", action=argparse.BooleanOptionalAction, default=True,
+        help="Apply the affine covariance calibration (legacy NLL-only models). Use --no-calibrate "
+             "for P2-pinball self-calibrated models (e.g. cov_p2p4), whose RAW covariance already "
+             "yields a target-coverage radius -- affine would double-calibrate it.",
+    )
 
     args = parser.parse_args()
 
@@ -136,13 +142,15 @@ def main():
     # Print coverage statistics
     print_coverage_stats(coverage_stats)
 
-    # Increase covariance for certain times and joints
-    covariance_matrices = calibrate_covariance_matrices(
-        covariance_matrices=covariance_matrices,
-        constant_time_factor=COV_CALIBRATION_CT,
-        increase_time_factor=COV_CALIBRATION_IT,
-        joint_calibration_factors=COV_CALIBRATION_FACTORS
-    )
+    # Increase covariance for certain times and joints (affine calibration; legacy models only --
+    # a P2-pinball self-calibrated model is already at target from the raw covariance).
+    if args.calibrate:
+        covariance_matrices = calibrate_covariance_matrices(
+            covariance_matrices=covariance_matrices,
+            constant_time_factor=COV_CALIBRATION_CT,
+            increase_time_factor=COV_CALIBRATION_IT,
+            joint_calibration_factors=COV_CALIBRATION_FACTORS
+        )
     # Generate n_std range
     n_std_range = [1, 2, 3, 4]
 

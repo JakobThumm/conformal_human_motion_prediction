@@ -210,8 +210,14 @@ def main():
     ap.add_argument("--monotone", action=argparse.BooleanOptionalAction, default=True,
                     help="Enforce q_hat non-decreasing in input uncertainty (isotonic smoothing).")
     ap.add_argument("--base", type=str, default="raw", choices=["raw", "affine"],
-                    help="Base radius the conformal correction sits on: raw model covariance (replaces "
-                         "the affine calibration) or the affine-calibrated covariance.")
+                    help="Base radius the conformal correction sits on: raw model covariance (correct "
+                         "for P2-pinball self-calibrated models, e.g. cov_p2p4) or the "
+                         "affine-calibrated covariance (legacy NLL-only models).")
+    ap.add_argument("--baseline", type=str, default="raw", choices=["raw", "affine"],
+                    help="What to compare conformal against in the report: 'raw' = the model's own "
+                         "(self-calibrated) radius -- the right comparison for P2-trained models; "
+                         "'affine' = the legacy affine-calibrated radius. Use 'raw' for cov_p2p4 "
+                         "(affine would double-calibrate a model that already predicts the radius).")
     ap.add_argument("--output_dir", type=str, default="results/motion_prediction/conformal_calibration")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -235,8 +241,8 @@ def main():
         pred, tgt, cov, in_cov = load_results(os.path.join(root_dir, path) if not os.path.isabs(path) else path)
         in_set = convert_covariance_matrices_to_set(in_cov, level) / 1000.0  # [N,J] m
         r_conf_base = rmodel(cov, args.base)
-        r_affine = rmodel(cov, "affine")  # the deployed baseline
-        return pred, tgt, in_set, r_conf_base, r_affine
+        r_baseline = rmodel(cov, args.baseline)  # comparison baseline (raw self-calibrated / affine)
+        return pred, tgt, in_set, r_conf_base, r_baseline
 
     # ----- assemble calibration / test splits --------------------------------------------------
     if args.calib_file and args.test_file:
@@ -254,7 +260,7 @@ def main():
         cal = tuple(a[ci] for a in (pred, tgt, in_set, r_conf_base, r_affine))
         tst = tuple(a[ti] for a in (pred, tgt, in_set, r_conf_base, r_affine))
     cpred, ctgt, cin, cbase, _ = cal
-    tpred, ttgt, tin, tbase, taff = tst
+    tpred, ttgt, tin, tbase, tbaseline = tst
     J = cpred.shape[2]; T = cpred.shape[1]
     print(f"  calib samples={cpred.shape[0]}  test samples={tpred.shape[0]}  J={J} T={T}  "
           f"level={level}  base={args.base}")
@@ -271,39 +277,40 @@ def main():
 
     # ----- evaluate on test split: baseline (affine) vs conditional conformal ------------------
     err_t, rm_t, in_t, j_t, t_t, valid_t = flatten_valid(tpred, ttgt, tbase, tin)
-    _, raff_t, _, _, _, _ = flatten_valid(tpred, ttgt, taff, tin)
+    _, rbase_t, _, _, _, _ = flatten_valid(tpred, ttgt, tbaseline, tin)
     r_conf_t = apply_calibrator(calib, rm_t, in_t, j_t, t_t)
 
-    cov_aff, vol_aff = coverage_volume(err_t, raff_t)
+    cov_base, vol_base = coverage_volume(err_t, rbase_t)
     cov_con, vol_con = coverage_volume(err_t, r_conf_t)
     print("\n==================== TEST-split coverage / volume ====================")
     print(f"target coverage (SET_LIKELIHOOD) = {level:.4f}")
+    base_label = f"baseline ({args.baseline})"
     print(f"{'method':>26} {'coverage':>10} {'mean vol (m^3)':>15} {'mean radius (m)':>16}")
-    print(f"{'affine calibration (current)':>26} {100 * cov_aff:>9.3f}% {vol_aff:>15.5f} {raff_t.mean()/1000:>16.4f}")
+    print(f"{base_label:>26} {100 * cov_base:>9.3f}% {vol_base:>15.5f} {rbase_t.mean()/1000:>16.4f}")
     print(f"{'conditional conformal':>26} {100 * cov_con:>9.3f}% {vol_con:>15.5f} {r_conf_t.mean()/1000:>16.4f}")
 
     # coverage by input-uncertainty bin (the M1 test)
     edges = calib["bin_edges"]
     bt = np.clip(np.searchsorted(edges, in_t, side="right"), 0, B - 1)
-    print("\nCoverage by input-uncertainty bin (affine -> conformal):")
-    print(f"  {'bin (m)':>16} {'n':>10} {'affine':>9} {'conformal':>10} {'aff vol':>9} {'con vol':>9}")
+    print(f"\nCoverage by input-uncertainty bin ({args.baseline} -> conformal):")
+    print(f"  {'bin (m)':>16} {'n':>10} {'base':>9} {'conformal':>10} {'base vol':>9} {'con vol':>9}")
     lab_edges = np.concatenate([[0.0], edges, [np.inf]])
     for bb in range(B):
         m = bt == bb
         if not m.any():
             continue
-        ca, _ = coverage_volume(err_t[m], raff_t[m]); cc, _ = coverage_volume(err_t[m], r_conf_t[m])
-        va = 4/3*np.pi*(raff_t[m].mean()/1000)**3; vc = 4/3*np.pi*(r_conf_t[m].mean()/1000)**3
+        ca, _ = coverage_volume(err_t[m], rbase_t[m]); cc, _ = coverage_volume(err_t[m], r_conf_t[m])
+        va = 4/3*np.pi*(rbase_t[m].mean()/1000)**3; vc = 4/3*np.pi*(r_conf_t[m].mean()/1000)**3
         lab = f"[{lab_edges[bb]:.2f},{lab_edges[bb+1]:.2f})" if np.isfinite(lab_edges[bb+1]) else f">={lab_edges[bb]:.2f}"
         print(f"  {lab:>16} {int(m.sum()):>10,} {100*ca:>8.2f}% {100*cc:>9.2f}% {va:>9.4f} {vc:>9.4f}")
 
     # per-joint coverage (the M2 test)
-    print("\nPer-joint coverage (affine -> conformal), sorted by affine coverage:")
-    print(f"  {'joint':>10} {'affine':>9} {'conformal':>10} {'aff vol':>9} {'con vol':>9}")
+    print(f"\nPer-joint coverage ({args.baseline} -> conformal), sorted by baseline coverage:")
+    print(f"  {'joint':>10} {'base':>9} {'conformal':>10} {'base vol':>9} {'con vol':>9}")
     rows = []
     for j in range(J):
         m = j_t == j
-        ca, va = coverage_volume(err_t[m], raff_t[m]); cc, vc = coverage_volume(err_t[m], r_conf_t[m])
+        ca, va = coverage_volume(err_t[m], rbase_t[m]); cc, vc = coverage_volume(err_t[m], r_conf_t[m])
         rows.append((j, ca, cc, va, vc))
     for j, ca, cc, va, vc in sorted(rows, key=lambda r: r[1]):
         print(f"  {JOINT_NAMES_13[j]:>10} {100*ca:>8.2f}% {100*cc:>9.2f}% {va:>9.4f} {vc:>9.4f}")
@@ -312,11 +319,11 @@ def main():
     # ----- figure -----------------------------------------------------------------------------
     fig, ax = plt.subplots(1, 3, figsize=(19, 5.5))
     bins_x = range(B)
-    ca_bin = [coverage_volume(err_t[bt == bb], raff_t[bt == bb])[0] * 100 for bb in bins_x]
+    ca_bin = [coverage_volume(err_t[bt == bb], rbase_t[bt == bb])[0] * 100 for bb in bins_x]
     cc_bin = [coverage_volume(err_t[bt == bb], r_conf_t[bt == bb])[0] * 100 for bb in bins_x]
     labels = [f"[{lab_edges[bb]:.2f},{lab_edges[bb+1]:.2f})" if np.isfinite(lab_edges[bb+1])
               else f">={lab_edges[bb]:.2f}" for bb in bins_x]
-    ax[0].plot(bins_x, ca_bin, "o-", color="#e45756", label="affine")
+    ax[0].plot(bins_x, ca_bin, "o-", color="#e45756", label=args.baseline)
     ax[0].plot(bins_x, cc_bin, "s-", color="#4c78a8", label="conformal")
     ax[0].axhline(100 * level, color="k", ls="--", lw=1, label=f"target {100*level:.1f}%")
     ax[0].set_xticks(list(bins_x)); ax[0].set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
@@ -324,7 +331,7 @@ def main():
     ax[0].set_ylabel("coverage (%)"); ax[0].legend(fontsize=8)
 
     jo = [r[0] for r in sorted(rows, key=lambda r: r[1])]
-    ax[1].plot(range(J), [100 * rows[j][1] for j in jo], "o-", color="#e45756", label="affine")
+    ax[1].plot(range(J), [100 * rows[j][1] for j in jo], "o-", color="#e45756", label=args.baseline)
     ax[1].plot(range(J), [100 * rows[j][2] for j in jo], "s-", color="#4c78a8", label="conformal")
     ax[1].axhline(100 * level, color="k", ls="--", lw=1, label=f"target {100*level:.1f}%")
     ax[1].set_xticks(range(J)); ax[1].set_xticklabels([JOINT_NAMES_13[j] for j in jo], rotation=45, ha="right", fontsize=8)
