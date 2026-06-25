@@ -38,12 +38,39 @@ Run::
 import argparse
 import multiprocessing as mp
 import os
+import sys
 import time as _time
 from types import SimpleNamespace
 
-# This script's compute is numpy/scipy; jax is only pulled in transitively (cov calibration).
-# Force it to CPU so we don't depend on the (shared) GPU and so forked workers stay clean.
-os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
+def _early_backend():
+    """Peek at argv for --backend / --parity before importing jax (which reads env at import)."""
+    backend, parity = "cpu", 0
+    for i, a in enumerate(sys.argv):
+        if a == "--backend" and i + 1 < len(sys.argv):
+            backend = sys.argv[i + 1]
+        elif a.startswith("--backend="):
+            backend = a.split("=", 1)[1]
+        elif a == "--parity" and i + 1 < len(sys.argv):
+            parity = sys.argv[i + 1]
+        elif a.startswith("--parity="):
+            parity = a.split("=", 1)[1]
+    try:
+        parity = int(parity)
+    except (TypeError, ValueError):
+        parity = 0
+    return backend, parity
+
+
+# The CPU path is numpy/scipy; jax is only pulled in transitively (cov calibration), so we force it
+# to CPU to avoid depending on the (shared) GPU and to keep forked workers clean. The GPU backend
+# (and parity check) instead needs jax on the GPU -- leave the platform default and enable x64 so a
+# float64 parity run is possible.
+_BACKEND_EARLY, _PARITY_EARLY = _early_backend()
+if _BACKEND_EARLY == "gpu" or _PARITY_EARLY > 0:
+    os.environ.setdefault("JAX_ENABLE_X64", "1")
+else:
+    os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import cloudpickle
 import numpy as np
@@ -506,6 +533,32 @@ def run_pose_pure(st, pose):
     return c
 
 
+def pose_active_set(st, pose):
+    """Replicate the level 1-3 pose gate (the part the GPU backend keeps on the CPU).
+
+    Returns ``(skip, active_idx)``: ``skip`` True iff the whole pose is culled at level 1 (robot
+    never reaches any human -> every pair verified, no contact); otherwise ``active_idx`` are the
+    motion indices surviving levels 2-3. Mirrors the masks in :func:`run_pose_pure`.
+    """
+    if not st.overapprox:
+        return False, np.arange(st.M, dtype=np.int64)
+    rot_t, tvec = pose_rt(pose)
+    r_c = st.R_c @ rot_t + tvec
+    if np.linalg.norm(st.H_c - r_c) > st.H_r + st.R_r:               # level 1
+        return True, np.empty(0, dtype=np.int64)
+    grp_hit = np.linalg.norm(st.hsm_c - r_c, axis=1) <= st.hsm_r + st.R_r          # level 2
+    active = (np.linalg.norm(st.hm_comb_c - r_c, axis=1) <= st.hm_comb_r + st.R_r) \
+        & grp_hit[st.group_id]                                                     # level 3
+    return False, np.flatnonzero(active).astype(np.int64)
+
+
+def _skipped_pose_counts(st, n_traj):
+    """Counter dict for a pose culled at level 1 (matches run_pose_pure's skip branch)."""
+    return dict(total_pairs=n_traj * st.M, n_verified=n_traj * st.M, n_contact=0, n_unsafe=0,
+                n_verified_contact=0, n_verified_unsafe=0, n_intervals_no_truth=st.total_no_truth,
+                n_pred_cand=0, n_true_cand=0, n_poses_skipped=1, active=0)
+
+
 # Set in the parent before forking workers; inherited (copy-on-write) so the GB-scale human
 # trees/hierarchy are shared, not pickled, to each worker.
 _WORKER_ST = None
@@ -569,7 +622,23 @@ def main():
                              "25 on the 4 ms grid = trajectories 100 ms apart (decorrelated cycles).")
     parser.add_argument("--num_workers", type=int, default=1,
                         help="Processes for evaluating poses in parallel (poses are independent). "
-                             "1 = serial. Uses fork so the human trees/hierarchy are shared.")
+                             "1 = serial. Uses fork so the human trees/hierarchy are shared. "
+                             "Ignored for --backend gpu (single process, GPU does the parallelism).")
+    parser.add_argument("--backend", type=str, default="cpu", choices=["cpu", "gpu"],
+                        help="Fine-phase (culling levels 4-5 + narrow phase) compute backend. "
+                             "'cpu' = the cKDTree path; 'gpu' = a dense JAX brute force over the "
+                             "level-3-active motions (levels 1-3 culling stays on the CPU). The GPU "
+                             "backend reports counts only -- it does not dump --save_failures.")
+    parser.add_argument("--gpu_dtype", type=str, default="float32", choices=["float32", "float64"],
+                        help="Compute precision for the GPU backend. float32 is fast on the 5090; "
+                             "float64 matches the CPU oracle bit-for-bit (use for --parity).")
+    parser.add_argument("--gpu_a_chunk", type=int, default=512,
+                        help="Active motions per GPU kernel launch. Lower it if the GPU OOMs "
+                             "(peak memory ~ gpu_a_chunk * max-capsules-per-step * J).")
+    parser.add_argument("--parity", type=int, default=0,
+                        help="Run the first N poses through BOTH the CPU oracle and the GPU backend "
+                             "and assert the counters match, then exit. Use --gpu_dtype float64 for "
+                             "an exact (precision-independent) logic check.")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -747,9 +816,43 @@ def main():
         )
 
     poses = sample_robot_poses(args.num_robot_poses, args.pose_radius, args.pose_z_offset, rng)
+    n_traj = len(times_ms)
+
+    # ----------------------------------------------------------------- parity check (CPU vs GPU)
+    if args.parity > 0:
+        from conformal_human_motion_prediction.examples.shield_gpu import GpuShieldEvaluator
+        keys = ["total_pairs", "n_verified", "n_contact", "n_unsafe",
+                "n_verified_contact", "n_verified_unsafe", "n_intervals_no_truth", "active"]
+        ev = GpuShieldEvaluator(st, n_traj, dtype=args.gpu_dtype, a_chunk=args.gpu_a_chunk)
+        n_check = min(args.parity, len(poses))
+        print(f"Parity check: {n_check} pose(s), CPU oracle vs GPU backend "
+              f"(dtype={args.gpu_dtype}, a_chunk={args.gpu_a_chunk}) ...")
+        n_fail = 0
+        for pidx in range(n_check):
+            pose = poses[pidx]
+            cpu = run_pose_pure(st, pose)
+            skip, ai = pose_active_set(st, pose)
+            gpu = _skipped_pose_counts(st, n_traj) if skip else ev.eval_active(pose, ai)
+            diffs = {k: (cpu[k], gpu[k]) for k in keys if cpu[k] != gpu[k]}
+            ok = not diffs
+            n_fail += int(not ok)
+            print(f"  pose {pidx + 1}/{n_check}: {'OK ' if ok else 'MISMATCH'} "
+                  f"active(cpu={cpu['active']}) verified={cpu['n_verified']} "
+                  f"contact={cpu['n_contact']} unsafe={cpu['n_unsafe']} "
+                  f"v&contact={cpu['n_verified_contact']} v&unsafe={cpu['n_verified_unsafe']}"
+                  + ("" if ok else f"  diffs={diffs}"))
+        print("=" * 60)
+        print(f"Parity: {n_check - n_fail}/{n_check} poses match"
+              + (" -- GPU backend verified." if n_fail == 0 else f" -- {n_fail} MISMATCH(es)!"))
+        raise SystemExit(0 if n_fail == 0 else 1)
+
     n_workers = max(1, min(args.num_workers, len(poses)))
-    print(f"Evaluating {len(poses)} random robot pose(s) over {n_workers} worker(s) "
-          f"(xy in {args.pose_radius} m disk, z +/-{args.pose_z_offset} m, yaw +/-pi) ...")
+    if args.backend == "gpu":
+        print(f"Evaluating {len(poses)} random robot pose(s) on the GPU backend "
+              f"(dtype={args.gpu_dtype}, a_chunk={args.gpu_a_chunk}; levels 1-3 culled on CPU) ...")
+    else:
+        print(f"Evaluating {len(poses)} random robot pose(s) over {n_workers} worker(s) "
+              f"(xy in {args.pose_radius} m disk, z +/-{args.pose_z_offset} m, yaw +/-pi) ...")
     n_poses_skipped = 0  # whole poses culled at level 1 (robot never reaches any human)
     failure_instances = []
 
@@ -770,7 +873,16 @@ def main():
               f"cum verified&contact={n_verified_contact:,} verified&unsafe={n_verified_unsafe:,} "
               f"({_time.time() - t0:.0f}s)")
 
-    if n_workers > 1:
+    if args.backend == "gpu":
+        if args.save_failures:
+            print("  NOTE: --save_failures is ignored for --backend gpu (counts-only backend).")
+        from conformal_human_motion_prediction.examples.shield_gpu import GpuShieldEvaluator
+        ev = GpuShieldEvaluator(st, n_traj, dtype=args.gpu_dtype, a_chunk=args.gpu_a_chunk)
+        for pidx, pose in enumerate(poses):
+            skip, ai = pose_active_set(st, pose)
+            cc = _skipped_pose_counts(st, n_traj) if skip else ev.eval_active(pose, ai)
+            accumulate(pidx, cc)
+    elif n_workers > 1:
         global _WORKER_ST
         _WORKER_ST = st  # set before forking so workers inherit it copy-on-write
         with mp.get_context("fork").Pool(n_workers) as pool:

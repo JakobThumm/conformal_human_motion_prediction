@@ -458,7 +458,7 @@
         "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
         "--calib_frac", "0.5",
         // >>> Play with the target confidence here (overrides SET_LIKELIHOOD). <<<
-        "--likelihood", "0.9990"
+        "--likelihood", "0.9999"
         // Other knobs you can add: --n_bins 8  --tail_edges 0.3 0.5 0.75  --n_min 200
         //                         --base raw|affine  --no-monotone  --seed 0
       ]
@@ -471,18 +471,41 @@
       "console": "integratedTerminal",
       "env": {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+        // Do NOT set JAX_PLATFORMS here: the script auto-keeps the GPU for "--backend gpu" and
+        // forces JAX onto the CPU otherwise. (Add "JAX_PLATFORMS": "cpu" only to pin everything,
+        // incl. the kernel, to the CPU backend.)
       },
       "args": [
         // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
         "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
-        "--num_robot_poses", "10000",
-        "--pose_radius", "7.0",
+        "--num_robot_poses", "128",   // production: ~1E6 (needed for PL_C); the GPU path culls ~85% for free.
+        "--pose_radius", "1.0",       // production: 10.0 (far poses then cull at level 1 on the CPU).
         "--pose_z_offset", "0.2",
-        "--num_workers", "24",
         "--seed", "0",
         "--mask_ood",
-        "--save_failures", "results/motion_prediction/shield_failures.npy",
-        "--max_failures", "200"
+
+        // ---- Fine-phase backend (culling levels 4-5 + narrow phase) ----
+        // gpu = dense JAX brute force over the level-3-active motions (levels 1-3 still cull on the
+        // CPU). ~90x faster per active pose than the cKDTree path. float32 is fine: it matches the
+        // CPU oracle's SAFETY verdict (verified&contact / verified&unsafe) exactly; only ~0.01% of
+        // the diagnostic contact/verified totals jitter at the dist==radius boundary.
+        "--backend", "gpu",
+        "--gpu_dtype", "float32",
+
+        // --gpu_a_chunk = active motions per GPU launch. Peak VRAM ~ a_chunk * max-capsules-per-step
+        // * n_joints. The kernel syncs once per pose, so larger = fewer dispatches = faster, until
+        // it no longer fits. Tune to the GPU you have:
+        //   * FREE GPU            -> "512" (or "1024"): fastest steady-state (~0.25 s/active pose).
+        //   * SHARED/CONTESTED GPU-> "128": fits in ~1-2 GB free VRAM; a touch slower, larger never OOMs.
+        "--gpu_a_chunk", "512"
+
+        // ---- CPU-backend-only options (IGNORED when --backend gpu) ----
+        // "--backend", "cpu", "--num_workers", "24",   // multi-core cKDTree path instead of the GPU.
+        // "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
+        //     // per-instance failure-geometry dump: CPU backend only (the GPU backend reports counts).
+
+        // ---- Verify GPU == CPU (optional) ----
+        // "--parity", "8", "--gpu_dtype", "float64"    // run both backends on 8 poses, assert equal counts.
       ]
     },
     {
