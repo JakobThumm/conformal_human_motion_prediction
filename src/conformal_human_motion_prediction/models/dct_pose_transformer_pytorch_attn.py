@@ -23,7 +23,8 @@ def pose_prediction_loss(pred_poses, target_poses):
     return jnp.mean(jnp.square(pred_poses - target_poses))
 
 
-def gaussian_nll_from_cholesky(y_pred, y_true, L, include_const=True, lambda_var=0.001, lambda_cov=0.01):
+def gaussian_nll_from_cholesky(y_pred, y_true, L, include_const=True, lambda_var=0.001, lambda_cov=0.01,
+                               weights=None):
     """
     Gaussian NLL using Cholesky factor L such that Sigma = L L^T.
 
@@ -32,6 +33,9 @@ def gaussian_nll_from_cholesky(y_pred, y_true, L, include_const=True, lambda_var
         y_true: [B, T, J, 3]
         L:      [B, T, J, 3, 3] (lower triangular, positive diag)
         include_const: whether to include k*log(2*pi)
+        weights: optional [B, T, J] non-negative per-joint-frame weights (P4 tail reweighting).
+                 Only the data NLL term is reweighted; the variance/off-diagonal regularizers stay
+                 on a plain mean so they keep their original scale.
 
     Returns:
         mean NLL (scalar)
@@ -63,7 +67,12 @@ def gaussian_nll_from_cholesky(y_pred, y_true, L, include_const=True, lambda_var
         k_log_2pi = 0.0
 
     nll = 0.5 * (mahal + log_det + k_log_2pi)
-    nll = jnp.mean(nll.reshape(B, T, J))
+    nll = nll.reshape(B, T, J)
+    if weights is not None:
+        w = weights.reshape(B, T, J)
+        nll = jnp.sum(nll * w) / jnp.maximum(jnp.sum(w), 1e-6)
+    else:
+        nll = jnp.mean(nll)
 
     # Variances from Cholesky L
     var_x = L[..., 0, 0]**2
@@ -79,6 +88,63 @@ def gaussian_nll_from_cholesky(y_pred, y_true, L, include_const=True, lambda_var
     reg_cov = lambda_cov * jnp.mean(jnp.abs(off_diag))
 
     return nll + reg_var + reg_cov
+
+
+def _chi2_3_ppf(likelihood):
+    """chi-square(df=3) quantile -- the scalar that converts an eigenvalue to a set radius.
+
+    Computed once on the host (scipy) so the loss stays a pure jnp expression.
+    """
+    from scipy.stats import chi2
+    return float(chi2.ppf(likelihood, df=3))
+
+
+def set_radius_pinball_loss(y_pred, y_true, cov, likelihood=0.995, valid_mask=None, weights=None):
+    """Pinball (quantile) loss on the *deployed* spherical set radius.
+
+    The deployed conformal set is a sphere of radius ``q = sqrt(lambda_max(Sigma) * chi2_3(likelihood))``
+    (see ``utils.eval_utils.convert_covariance_matrices_to_set``). The Gaussian NLL only shapes the
+    likelihood whose eigenvalue is later thresholded; this term trains that radius *directly* toward
+    the ``likelihood`` quantile of the residual ``r = ||pred - true||`` per (joint, frame), so
+    under-coverage is penalised exactly where it occurs.
+
+    The prediction is detached in the residual so this term only widens/shrinks the covariance head
+    and never competes with the pose-prediction MSE for the mean.
+
+    Args:
+        y_pred: [B, T, J, 3] predicted poses (mm)
+        y_true: [B, T, J, 3] target poses (mm)
+        cov:    [B, T, J, 3, 3] predicted covariance Sigma = L L^T (mm^2)
+        likelihood: target coverage tau (matches SET_LIKELIHOOD)
+        valid_mask: optional [B, T] bool, True where the frame is valid
+
+    Returns:
+        mean pinball loss (scalar)
+    """
+    tau = likelihood
+    c = _chi2_3_ppf(likelihood)
+
+    # Deployed radius: sqrt(lambda_max(Sigma) * c). eigvalsh is differentiable in jax.
+    lambda_max = jnp.max(jnp.linalg.eigvalsh(cov), axis=-1)          # [B, T, J]
+    q = jnp.sqrt(jnp.maximum(lambda_max * c, 1e-12))                  # [B, T, J] (mm)
+
+    # Residual -- detach the mean so only the covariance is trained by this term.
+    r = jnp.linalg.norm(jax.lax.stop_gradient(y_true - y_pred), axis=-1)  # [B, T, J]
+
+    diff = r - q
+    pinball = jnp.maximum(tau * diff, (tau - 1.0) * diff)            # [B, T, J]
+
+    # Optional weighting: P4 tail reweighting and/or validity masking. Both fold into a single
+    # weighted mean so under-covered (high-input-uncertainty) joint-frames count more.
+    w = jnp.ones_like(pinball)
+    if weights is not None:
+        w = w * weights
+    if valid_mask is not None:
+        B, T, J = pinball.shape
+        w = w * jnp.broadcast_to(valid_mask[:, :, None], (B, T, J))
+    if weights is None and valid_mask is None:
+        return jnp.mean(pinball)
+    return jnp.sum(pinball * w) / jnp.maximum(jnp.sum(w), 1e-6)
 
 
 class FrequencyAwareAttentionPyTorch(nn.Module):
