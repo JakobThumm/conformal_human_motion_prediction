@@ -525,13 +525,24 @@ Uncertainty Coverage Stats:
 Tune with:
 ```
 {
-  "name": "Tune Motion Prediction Covariance Offset",
+  "name": "Conformal Calibration (tune confidence)",
   "type": "debugpy",
   "request": "launch",
-  "program": "human_pose_pipeline/motion_prediction/tune_covariance_offset.py",
+  "program": "src/conformal_human_motion_prediction/motion_prediction/conformal_calibration.py",
   "console": "integratedTerminal",
+  "env": {
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+    "JAX_PLATFORMS": "cpu"  // pure numpy/scipy; keep off the shared GPU
+  },
   "args": [
-      "--results_file", "results/motion_prediction/motion_prediction_results_train.cloudpickle",
+    // Tuning phase: split validation 50/50 (calib/test) so coverage is reported honestly.
+    // Final step: drop --calib_frac and pass --calib_file <S11> --test_file <S5> instead.
+    "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
+    "--calib_frac", "0.5",
+    // >>> Play with the target confidence here (overrides SET_LIKELIHOOD). <<<
+    "--likelihood", "0.9999"
+    // Other knobs you can add: --n_bins 8  --tail_edges 0.3 0.5 0.75  --n_min 200
+    //                         --base raw|affine  --no-monotone  --seed 0
   ]
 },
 ```
@@ -548,259 +559,190 @@ Evaluate with:
   ]
 },
 ```
-Results (Model: with scaled input uncertainty Stage 4.):
+Notes:
+ - The following results differ slightly from the previous results as the following things changed:
+    - Model now trained from scratch instead of from torch checkpoint
+    - New training loss for uncertainty prediction (pinball loss)
+    - Upweighted samples with high input uncertainty in training
+    - Too fast motions filtered out (v_human >= 2.0 m/s) -> Violating ISO norm
+
+Results:
 
 **Tuned Predictions**
 ```
-Loaded predictions shape: (47040, 10, 13, 3)
-Loaded targets shape: (47040, 10, 13, 3)
-Loaded covariance matrices shape: (47040, 10, 13, 3, 3)
+Loaded 47054 sequences for validation split from preprocessed data
+Too-fast target filter: kept 39450/47054 sequences (dropped 7604 with >2.0 m/s mocap motion in the horizon)
+
+Overall MPJPE: 52.27 mm
+
+Per-Time Errors:
+  Time point 1 error =   37.51 mm
+  Time point 2 error =   37.27 mm
+  Time point 3 error =   39.64 mm
+  Time point 4 error =   43.49 mm
+  Time point 5 error =   47.75 mm
+  Time point 6 error =   52.71 mm
+  Time point 7 error =   57.84 mm
+  Time point 8 error =   63.27 mm
+  Time point 9 error =   68.66 mm
+  Time point 10 error =   74.56 mm
+
+Per-Joint Errors:
+  Joint 1 error =   41.03 mm
+  Joint 2 error =   42.56 mm
+  Joint 3 error =   43.13 mm
+  Joint 4 error =   64.39 mm
+  Joint 5 error =   63.73 mm
+  Joint 6 error =   84.51 mm
+  Joint 7 error =   77.95 mm
+  Joint 8 error =   41.81 mm
+  Joint 9 error =   41.75 mm
+  Joint 10 error =   40.43 mm
+  Joint 11 error =   39.75 mm
+  Joint 12 error =   48.09 mm
+  Joint 13 error =   50.35 mm
+Saved overall MPJPE results to results/motion_prediction/mpjpe_results_test.csv
+Saved per-time MPJPE results to results/motion_prediction/per_time_mpjpe_results_test.csv
+Saved per-joint MPJPE results to results/motion_prediction/per_joint_mpjpe_results_test.csv
 
 Uncertainty Coverage Stats:
-  Overall coverage within 1 std: 84.59%
-  Overall coverage within 2 std: 95.86%
-  Overall coverage within 3 std: 98.73%
-  Overall coverage within 4 std: 99.55%
+  Overall coverage within 1 std: 62.75%
+  Overall coverage within 2 std: 84.52%
+  Overall coverage within 3 std: 92.60%
+  Overall coverage within 4 std: 95.98%
+
+================================
+Evaluating conformal prediction sets.
+================================
+Using conditional-conformal calibrator results/motion_prediction/conformal_calibration/conformal_calibrator.npz (target 0.9999) for the conformal prediction sets.
+Coverage Stats After Calibration
+
+Uncertainty Coverage Stats:
+  Overall coverage within 1 std: 96.12%
+  Overall coverage within 2 std: 99.13%
+  Overall coverage within 3 std: 99.72%
+  Overall coverage within 4 std: 99.89%
+
+Predicted spherical reachable set coverage stats for 0.9999 likelihood:
+**Overall coverage within set: 99.97%**
+**Mean volume = 0.1533 m^3**
 
 Per-Time Coverage Stats:
-
-  Overall coverage within 1 std:
-    Frame 0: 69.06%
-    Frame 1: 78.43%
-    Frame 2: 82.92%
-    Frame 3: 85.35%
-    Frame 4: 86.84%
-    Frame 5: 87.83%
-    Frame 6: 88.43%
-    Frame 7: 88.87%
-    Frame 8: 89.06%
-    Frame 9: 89.14%
-
-  Overall coverage within 2 std:
-    Frame 0: 90.43%
-    Frame 1: 94.38%
-    Frame 2: 95.70%
-    Frame 3: 96.36%
-    Frame 4: 96.73%
-    Frame 5: 96.92%
-    Frame 6: 97.02%
-    Frame 7: 97.04%
-    Frame 8: 97.03%
-    Frame 9: 96.99%
-
-  Overall coverage within 3 std:
-    Frame 0: 96.85%
-    Frame 1: 98.30%
-    Frame 2: 98.76%
-    Frame 3: 99.01%
-    Frame 4: 99.12%
-    Frame 5: 99.11%
-    Frame 6: 99.10%
-    Frame 7: 99.06%
-    Frame 8: 99.03%
-    Frame 9: 98.99%
-
-  Overall coverage within 4 std:
-    Frame 0: 98.80%
-    Frame 1: 99.42%
-    Frame 2: 99.62%
-    Frame 3: 99.69%
-    Frame 4: 99.70%
-    Frame 5: 99.69%
-    Frame 6: 99.67%
-    Frame 7: 99.65%
-    Frame 8: 99.64%
-    Frame 9: 99.61%
-
-Per-Joint Coverage Stats:
-
-  Overall coverage within 1 std:
-    Joint 0: 85.17%
-    Joint 1: 85.51%
-    Joint 2: 85.29%
-    Joint 3: 78.75%
-    Joint 4: 75.94%
-    Joint 5: 87.34%
-    Joint 6: 84.09%
-    Joint 7: 78.81%
-    Joint 8: 87.93%
-    Joint 9: 88.93%
-    Joint 10: 86.42%
-    Joint 11: 89.81%
-    Joint 12: 85.69%
-
-  Overall coverage within 2 std:
-    Joint 0: 96.64%
-    Joint 1: 97.01%
-    Joint 2: 96.83%
-    Joint 3: 94.38%
-    Joint 4: 92.04%
-    Joint 5: 97.37%
-    Joint 6: 95.80%
-    Joint 7: 93.19%
-    Joint 8: 97.51%
-    Joint 9: 97.31%
-    Joint 10: 96.21%
-    Joint 11: 96.91%
-    Joint 12: 94.96%
-
-  Overall coverage within 3 std:
-    Joint 0: 99.10%
-    Joint 1: 99.25%
-    Joint 2: 99.19%
-    Joint 3: 98.52%
-    Joint 4: 97.22%
-    Joint 5: 99.32%
-    Joint 6: 98.81%
-    Joint 7: 97.81%
-    Joint 8: 99.44%
-    Joint 9: 99.16%
-    Joint 10: 98.80%
-    Joint 11: 98.97%
-    Joint 12: 97.91%
-
-  Overall coverage within 4 std:
-    Joint 0: 99.68%
-    Joint 1: 99.80%
-    Joint 2: 99.75%
-    Joint 3: 99.58%
-    Joint 4: 98.92%
-    Joint 5: 99.78%
-    Joint 6: 99.58%
-    Joint 7: 99.25%
-    Joint 8: 99.86%
-    Joint 9: 99.71%
-    Joint 10: 99.62%
-    Joint 11: 99.59%
-    Joint 12: 99.04%
-Predicted spherical reachable set coverage stats for 0.99 likelihood:
-Overall coverage within set: 98.93%
-Mean volume = 0.0174 m^3
-
-Per-Time Coverage Stats:
-    Frame 0: 97.45%
-    Frame 1: 98.66%
-    Frame 2: 98.99%
-    Frame 3: 99.13%
-    Frame 4: 99.22%
-    Frame 5: 99.21%
-    Frame 6: 99.20%
-    Frame 7: 99.17%
-    Frame 8: 99.14%
-    Frame 9: 99.11%
+    Frame 0: 99.98%
+    Frame 1: 99.98%
+    Frame 2: 99.98%
+    Frame 3: 99.99%
+    Frame 4: 99.98%
+    Frame 5: 99.98%
+    Frame 6: 99.97%
+    Frame 7: 99.96%
+    Frame 8: 99.94%
+    Frame 9: 99.91%
 
 Per-Time Volume [m^3]:
-    Frame 0: 0.0022
-    Frame 1: 0.0036
-    Frame 2: 0.0058
-    Frame 3: 0.0090
-    Frame 4: 0.0134
-    Frame 5: 0.0194
-    Frame 6: 0.0274
-    Frame 7: 0.0378
-    Frame 8: 0.0510
-    Frame 9: 0.0673
+    Frame 0: 0.0977
+    Frame 1: 0.0983
+    Frame 2: 0.1075
+    Frame 3: 0.1208
+    Frame 4: 0.1369
+    Frame 5: 0.1566
+    Frame 6: 0.1791
+    Frame 7: 0.2032
+    Frame 8: 0.2318
+    Frame 9: 0.2612
 
 Per-Joint Coverage Stats:
-    Joint 0: 99.39%
-    Joint 1: 99.53%
-    Joint 2: 99.46%
-    Joint 3: 98.76%
-    Joint 4: 97.74%
-    Joint 5: 99.23%
-    Joint 6: 98.77%
-    Joint 7: 98.08%
-    Joint 8: 99.50%
-    Joint 9: 99.44%
-    Joint 10: 99.04%
-    Joint 11: 99.06%
-    Joint 12: 98.07%
+    Joint 0: 99.98%
+    Joint 1: 99.98%
+    Joint 2: 99.98%
+    Joint 3: 99.98%
+    Joint 4: 99.98%
+    Joint 5: 99.97%
+    Joint 6: 99.99%
+    Joint 7: 99.99%
+    Joint 8: 99.97%
+    Joint 9: 99.97%
+    Joint 10: 99.96%
+    Joint 11: 99.93%
+    Joint 12: 99.93%
 
 Per-Joint Volume [m^3]:
-    Joint 0: 0.0087
-    Joint 1: 0.0092
-    Joint 2: 0.0090
-    Joint 3: 0.0206
-    Joint 4: 0.0179
-    Joint 5: 0.0690
-    Joint 6: 0.0640
-    Joint 7: 0.0105
-    Joint 8: 0.0095
-    Joint 9: 0.0094
-    Joint 10: 0.0084
-    Joint 11: 0.0227
-    Joint 12: 0.0203
-```
-**SARA simple velocity model coverage stats**
-```
+    Joint 0: 0.0878
+    Joint 1: 0.0564
+    Joint 2: 0.0569
+    Joint 3: 0.2046
+    Joint 4: 0.2260
+    Joint 5: 0.3428
+    Joint 6: 0.4849
+    Joint 7: 0.0567
+    Joint 8: 0.0410
+    Joint 9: 0.0861
+    Joint 10: 0.1017
+    Joint 11: 0.3629
+    Joint 12: 0.3581
+Saved SARA coverage results to results/motion_prediction/coverage_stats_conformal_prediction_sets.csv
+
+====================================
+SARA Coverage Stats
+====================================
 SARA simple velocity model coverage stats:
-Overall coverage within set: 97.58%
-Mean volume = 0.1827 m^3
+**Overall coverage within set: 99.92%**
+**Mean volume = 0.7035 m^3**
 
 Per-Time Coverage Stats:
-    Frame 0: 89.11%
-    Frame 1: 96.85%
-    Frame 2: 98.06%
-    Frame 3: 98.44%
-    Frame 4: 98.61%
-    Frame 5: 98.75%
-    Frame 6: 98.86%
-    Frame 7: 98.96%
-    Frame 8: 99.04%
-    Frame 9: 99.12%
+    Frame 0: 99.92%
+    Frame 1: 99.92%
+    Frame 2: 99.92%
+    Frame 3: 99.92%
+    Frame 4: 99.92%
+    Frame 5: 99.92%
+    Frame 6: 99.92%
+    Frame 7: 99.92%
+    Frame 8: 99.92%
+    Frame 9: 99.92%
 
 Per-Time Volume [m^3]:
-    Frame 0: 0.0011
-    Frame 1: 0.0088
-    Frame 2: 0.0296
-    Frame 3: 0.0703
-    Frame 4: 0.1373
-    Frame 5: 0.2372
-    Frame 6: 0.3766
-    Frame 7: 0.5622
-    Frame 8: 0.8005
-    Frame 9: 1.0981
+    Frame 0: 0.0295
+    Frame 1: 0.0841
+    Frame 2: 0.1823
+    Frame 3: 0.3371
+    Frame 4: 0.5614
+    Frame 5: 0.8679
+    Frame 6: 1.2697
+    Frame 7: 1.7795
+    Frame 8: 2.4102
+    Frame 9: 3.1747
 
 Per-Joint Coverage Stats:
-    Joint 0: 99.43%
-    Joint 1: 99.08%
-    Joint 2: 99.48%
-    Joint 3: 98.27%
-    Joint 4: 98.12%
-    Joint 5: 96.09%
-    Joint 6: 96.41%
-    Joint 7: 98.15%
-    Joint 8: 99.19%
-    Joint 9: 97.36%
-    Joint 10: 98.41%
-    Joint 11: 94.41%
-    Joint 12: 94.13%
+    Joint 0: 99.92%
+    Joint 1: 99.92%
+    Joint 2: 99.92%
+    Joint 3: 99.92%
+    Joint 4: 99.92%
+    Joint 5: 99.92%
+    Joint 6: 99.92%
+    Joint 7: 99.92%
+    Joint 8: 99.92%
+    Joint 9: 99.92%
+    Joint 10: 99.92%
+    Joint 11: 99.92%
+    Joint 12: 99.92%
 
 Per-Joint Volume [m^3]:
-    Joint 0: 0.1827
-    Joint 1: 0.1827
-    Joint 2: 0.1827
-    Joint 3: 0.1827
-    Joint 4: 0.1827
-    Joint 5: 0.1827
-    Joint 6: 0.1827
-    Joint 7: 0.1827
-    Joint 8: 0.1827
-    Joint 9: 0.1827
-    Joint 10: 0.1827
-    Joint 11: 0.1827
-    Joint 12: 0.1827
-```
-
-### Tried Different Offset Strategy
-
-```
-        # Subtract only the head position (first 3 entries) from all joints
-        offset = x[:, -1:, 0:3]
-        offset = jnp.tile(offset, (1, 1, x.shape[-1] // 3))
-```
-Eval MPJPE = 55mm slightly worse!
--> Reverse Change.
+    Joint 0: 0.5896
+    Joint 1: 0.6120
+    Joint 2: 0.6520
+    Joint 3: 0.7702
+    Joint 4: 0.7976
+    Joint 5: 1.0631
+    Joint 6: 0.9817
+    Joint 7: 0.6410
+    Joint 8: 0.6466
+    Joint 9: 0.5925
+    Joint 10: 0.5774
+    Joint 11: 0.6737
+    Joint 12: 0.6650
+Saved SARA coverage results to results/motion_prediction/coverage_stats_sara.csv
 
 ## Full Evaluation Pipeline
 
@@ -2740,3 +2682,64 @@ Per-Joint Volume [m^3]:
     Joint 12: 0.5008
 
 ### RGB-D YOLO Results Ellipsoid to Sphere Approach
+
+# Simulate Robot Shield
+Settings:
+  - OOD Threshold: 1.5E-5
+  - Set likelihood: 0.9999 (99.99%)
+
+```
+{
+  "name": "Simulate Robot Shield",
+  "type": "debugpy",
+  "request": "launch",
+  "program": "src/conformal_human_motion_prediction/examples/simulate_robot_shield.py",
+  "console": "integratedTerminal",
+  "env": {
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+    // Do NOT set JAX_PLATFORMS here: the script auto-keeps the GPU for "--backend gpu" and
+    // forces JAX onto the CPU otherwise. (Add "JAX_PLATFORMS": "cpu" only to pin everything,
+    // incl. the kernel, to the CPU backend.)
+  },
+  "args": [
+    // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
+    "--results_file", "results/motion_prediction/motion_prediction_results_test.cloudpickle",
+    "--num_robot_poses", "1000000",   // production: ~1E6 (needed for PL_C); the GPU path culls ~85% for free.
+    "--pose_radius", "10.0",       // production: 10.0 (far poses then cull at level 1 on the CPU).
+    "--pose_z_offset", "0.2",
+    "--seed", "0",
+    "--mask_ood",
+    "--backend", "gpu",  // Run verification of heavy intersection poses on GPU.
+    "--gpu_dtype", "float32",
+    "--gpu_a_chunk", "512",
+    "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
+  ]
+},
+```
+
+==================== Shield simulation results ====================
+Random robot poses     : 1000000
+Monitored trajectories : 95
+Eligible human samples : 49139
+Total (pose, traj, human) trials : 4,668,205,000,000
+Intervals without ground-truth robot state (past log end): 3,000,000
+Poses fully culled at level 1: 841880/1000000
+Level-5 survivors (detailed-checked): predicted 0.000%, true 0.000% of trials (rest culled by the hierarchy)
+-------------------------------------------------------------------
+Verified (shield says safe) : 4,630,075,996,609  (99.183% of trials)
+True contact                : 14,261,586,125  (0.306% of trials)
+True unsafe contact         : 5,858,145,258  (0.125% of trials)
+-------------------------------------------------------------------
+>>> Verified BUT contact        : 0  (0.0000% of verified, 0.0000% of trials)
+>>> Verified BUT unsafe contact : 0  (0.0000% of verified, 0.0000% of trials)
+===================================================================
+
+============== PFH_D (dangerous failure rate) per ISO 13849-1 ==============
+Dangerous failure = verified BUT unsafe contact (speed > V_ROBOT_ISO = 0.25 m/s)
+Test cycles N = 4,668,205,000,000   dangerous failures k = 0   t_cycle = 0.004 s
+confidence |  PFC_D upper (1/cyc) |  PFH_D upper (1/h) | PL
+------------------------------------------------------------------------
+    0.9900 |            9.865e-13 |          8.878e-07 | d
+    0.9990 |            1.480e-12 |          1.332e-06 | c
+    0.9999 |            1.973e-12 |          1.776e-06 | c
+============================================================================
