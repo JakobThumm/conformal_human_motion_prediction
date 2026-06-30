@@ -44,7 +44,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from conformal_human_motion_prediction.motion_prediction.inference_helper import calibrate_covariance_matrices
-from conformal_human_motion_prediction.utils.eval_utils import convert_covariance_matrices_to_set
+from conformal_human_motion_prediction.utils.eval_utils import (
+    compute_sara_predictions,
+    convert_covariance_matrices_to_set,
+)
 from conformal_human_motion_prediction.pose_estimation.h36m_settings import JOINT_NAMES_13
 
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
@@ -165,7 +168,8 @@ def load_results(path):
     if li.shape[1] < J * 3 + J * 9:
         raise SystemExit("last_input_poses lacks the covariance block (need the input_uncertainty pipeline).")
     in_cov = li[:, J * 3:J * 3 + J * 9].reshape(N, J, 3, 3)
-    return pred, tgt, cov, in_cov
+    last_poses = li[:, :J * 3].reshape(N, J, 3)  # [N, J, 3]
+    return pred, tgt, cov, in_cov, last_poses
 
 
 def flatten_valid(pred, tgt, cov_radius, in_set, level=None):
@@ -238,11 +242,21 @@ def main():
         return convert_covariance_matrices_to_set(c, likelihood=level)  # [N,T,J] mm
 
     def prep(path):
-        pred, tgt, cov, in_cov = load_results(os.path.join(root_dir, path) if not os.path.isabs(path) else path)
+        pred, tgt, cov, in_cov, last_poses = load_results(os.path.join(root_dir, path) if not os.path.isabs(path) else path)
         in_set = convert_covariance_matrices_to_set(in_cov, level) / 1000.0  # [N,J] m
         r_conf_base = rmodel(cov, args.base)
         r_baseline = rmodel(cov, args.baseline)  # comparison baseline (raw self-calibrated / affine)
-        return pred, tgt, in_set, r_conf_base, r_baseline
+        # Compute SARA shield radius with per-joint input uncertainty
+        N, T, J, _ = pred.shape
+        dt = 1.0 / 25.0  # FPS = 25 from h36m_settings
+        pred_horizon_times = [(t + 1) * dt for t in range(T)]
+        _, r_sara = compute_sara_predictions(
+            last_input_poses=last_poses,
+            prediction_horizon_times=pred_horizon_times,
+            v_human=2.0,  # V_HUMAN_ISO from h36m_settings
+            measurement_uncertainty=in_set,
+        )  # [N, T, J] mm
+        return pred, tgt, in_set, r_conf_base, r_baseline, r_sara
 
     # ----- assemble calibration / test splits --------------------------------------------------
     if args.calib_file and args.test_file:
@@ -251,16 +265,16 @@ def main():
         tst = prep(args.test_file)
     else:
         print(f"Splitting {args.results_file} by sample ({args.calib_frac:.0%} calib / rest test)")
-        pred, tgt, in_set, r_conf_base, r_affine = prep(args.results_file)
+        pred, tgt, in_set, r_conf_base, r_affine, r_sara = prep(args.results_file)
         N = pred.shape[0]
         rng = np.random.default_rng(args.seed)
         perm = rng.permutation(N)
         n_cal = int(round(args.calib_frac * N))
         ci, ti = np.sort(perm[:n_cal]), np.sort(perm[n_cal:])
-        cal = tuple(a[ci] for a in (pred, tgt, in_set, r_conf_base, r_affine))
-        tst = tuple(a[ti] for a in (pred, tgt, in_set, r_conf_base, r_affine))
-    cpred, ctgt, cin, cbase, _ = cal
-    tpred, ttgt, tin, tbase, tbaseline = tst
+        cal = tuple(a[ci] for a in (pred, tgt, in_set, r_conf_base, r_affine, r_sara))
+        tst = tuple(a[ti] for a in (pred, tgt, in_set, r_conf_base, r_affine, r_sara))
+    cpred, ctgt, cin, cbase, _, _ = cal
+    tpred, ttgt, tin, tbase, tbaseline, tsara = tst
     J = cpred.shape[2]; T = cpred.shape[1]
     print(f"  calib samples={cpred.shape[0]}  test samples={tpred.shape[0]}  J={J} T={T}  "
           f"level={level}  base={args.base}")
@@ -275,56 +289,67 @@ def main():
     src_counts = {s: int((calib['source'] == s).sum()) for s in ("jtb", "jb", "b", "g")}
     print(f"  group source (finest->coarsest): {src_counts}")
 
-    # ----- evaluate on test split: baseline (affine) vs conditional conformal ------------------
+    # ----- evaluate on test split: baseline (affine) vs conditional conformal vs SARA ------------------
     err_t, rm_t, in_t, j_t, t_t, valid_t = flatten_valid(tpred, ttgt, tbase, tin)
     _, rbase_t, _, _, _, _ = flatten_valid(tpred, ttgt, tbaseline, tin)
+    _, rsara_t, _, _, _, _ = flatten_valid(tpred, ttgt, tsara, tin)
     r_conf_t = apply_calibrator(calib, rm_t, in_t, j_t, t_t)
 
     cov_base, vol_base = coverage_volume(err_t, rbase_t)
     cov_con, vol_con = coverage_volume(err_t, r_conf_t)
+    cov_sara, vol_sara = coverage_volume(err_t, rsara_t)
     print("\n==================== TEST-split coverage / volume ====================")
     print(f"target coverage (SET_LIKELIHOOD) = {level:.4f}")
     base_label = f"baseline ({args.baseline})"
     print(f"{'method':>26} {'coverage':>10} {'mean vol (m^3)':>15} {'mean radius (m)':>16}")
     print(f"{base_label:>26} {100 * cov_base:>9.3f}% {vol_base:>15.5f} {rbase_t.mean()/1000:>16.4f}")
     print(f"{'conditional conformal':>26} {100 * cov_con:>9.3f}% {vol_con:>15.5f} {r_conf_t.mean()/1000:>16.4f}")
+    print(f"{'SARA shield':>26} {100 * cov_sara:>9.3f}% {vol_sara:>15.5f} {rsara_t.mean()/1000:>16.4f}")
 
     # coverage by input-uncertainty bin (the M1 test)
     edges = calib["bin_edges"]
     bt = np.clip(np.searchsorted(edges, in_t, side="right"), 0, B - 1)
-    print(f"\nCoverage by input-uncertainty bin ({args.baseline} -> conformal):")
-    print(f"  {'bin (m)':>16} {'n':>10} {'base':>9} {'conformal':>10} {'base vol':>9} {'con vol':>9}")
+    print(f"\nCoverage by input-uncertainty bin ({args.baseline} -> conformal -> SARA):")
+    print(f"  {'bin (m)':>16} {'n':>10} {'base':>9} {'conformal':>10} {'SARA':>9} {'base vol':>9} {'con vol':>9} {'sara vol':>9}")
     lab_edges = np.concatenate([[0.0], edges, [np.inf]])
     for bb in range(B):
         m = bt == bb
         if not m.any():
             continue
-        ca, _ = coverage_volume(err_t[m], rbase_t[m]); cc, _ = coverage_volume(err_t[m], r_conf_t[m])
-        va = 4/3*np.pi*(rbase_t[m].mean()/1000)**3; vc = 4/3*np.pi*(r_conf_t[m].mean()/1000)**3
+        ca, _ = coverage_volume(err_t[m], rbase_t[m])
+        cc, _ = coverage_volume(err_t[m], r_conf_t[m])
+        cs, _ = coverage_volume(err_t[m], rsara_t[m])
+        va = 4/3*np.pi*(rbase_t[m].mean()/1000)**3
+        vc = 4/3*np.pi*(r_conf_t[m].mean()/1000)**3
+        vs = 4/3*np.pi*(rsara_t[m].mean()/1000)**3
         lab = f"[{lab_edges[bb]:.2f},{lab_edges[bb+1]:.2f})" if np.isfinite(lab_edges[bb+1]) else f">={lab_edges[bb]:.2f}"
-        print(f"  {lab:>16} {int(m.sum()):>10,} {100*ca:>8.2f}% {100*cc:>9.2f}% {va:>9.4f} {vc:>9.4f}")
+        print(f"  {lab:>16} {int(m.sum()):>10,} {100*ca:>8.2f}% {100*cc:>9.2f}% {100*cs:>8.2f}% {va:>9.4f} {vc:>9.4f} {vs:>9.4f}")
 
     # per-joint coverage (the M2 test)
-    print(f"\nPer-joint coverage ({args.baseline} -> conformal), sorted by baseline coverage:")
-    print(f"  {'joint':>10} {'base':>9} {'conformal':>10} {'base vol':>9} {'con vol':>9}")
+    print(f"\nPer-joint coverage ({args.baseline} -> conformal -> SARA), sorted by baseline coverage:")
+    print(f"  {'joint':>10} {'base':>9} {'conformal':>10} {'SARA':>9} {'base vol':>9} {'con vol':>9} {'sara vol':>9}")
     rows = []
     for j in range(J):
         m = j_t == j
-        ca, va = coverage_volume(err_t[m], rbase_t[m]); cc, vc = coverage_volume(err_t[m], r_conf_t[m])
-        rows.append((j, ca, cc, va, vc))
-    for j, ca, cc, va, vc in sorted(rows, key=lambda r: r[1]):
-        print(f"  {JOINT_NAMES_13[j]:>10} {100*ca:>8.2f}% {100*cc:>9.2f}% {va:>9.4f} {vc:>9.4f}")
-    print("=" * 70)
+        ca, va = coverage_volume(err_t[m], rbase_t[m])
+        cc, vc = coverage_volume(err_t[m], r_conf_t[m])
+        cs, vs = coverage_volume(err_t[m], rsara_t[m])
+        rows.append((j, ca, cc, cs, va, vc, vs))
+    for j, ca, cc, cs, va, vc, vs in sorted(rows, key=lambda r: r[1]):
+        print(f"  {JOINT_NAMES_13[j]:>10} {100*ca:>8.2f}% {100*cc:>9.2f}% {100*cs:>8.2f}% {va:>9.4f} {vc:>9.4f} {vs:>9.4f}")
+    print("=" * 90)
 
     # ----- figure -----------------------------------------------------------------------------
     fig, ax = plt.subplots(1, 3, figsize=(19, 5.5))
     bins_x = range(B)
     ca_bin = [coverage_volume(err_t[bt == bb], rbase_t[bt == bb])[0] * 100 for bb in bins_x]
     cc_bin = [coverage_volume(err_t[bt == bb], r_conf_t[bt == bb])[0] * 100 for bb in bins_x]
+    cs_bin = [coverage_volume(err_t[bt == bb], rsara_t[bt == bb])[0] * 100 for bb in bins_x]
     labels = [f"[{lab_edges[bb]:.2f},{lab_edges[bb+1]:.2f})" if np.isfinite(lab_edges[bb+1])
               else f">={lab_edges[bb]:.2f}" for bb in bins_x]
     ax[0].plot(bins_x, ca_bin, "o-", color="#e45756", label=args.baseline)
     ax[0].plot(bins_x, cc_bin, "s-", color="#4c78a8", label="conformal")
+    ax[0].plot(bins_x, cs_bin, "^-", color="#59a14f", label="SARA")
     ax[0].axhline(100 * level, color="k", ls="--", lw=1, label=f"target {100*level:.1f}%")
     ax[0].set_xticks(list(bins_x)); ax[0].set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
     ax[0].set_title("Coverage vs input uncertainty (M1)"); ax[0].set_xlabel("input-unc bin (m)")
@@ -333,6 +358,7 @@ def main():
     jo = [r[0] for r in sorted(rows, key=lambda r: r[1])]
     ax[1].plot(range(J), [100 * rows[j][1] for j in jo], "o-", color="#e45756", label=args.baseline)
     ax[1].plot(range(J), [100 * rows[j][2] for j in jo], "s-", color="#4c78a8", label="conformal")
+    ax[1].plot(range(J), [100 * rows[j][3] for j in jo], "^-", color="#59a14f", label="SARA")
     ax[1].axhline(100 * level, color="k", ls="--", lw=1, label=f"target {100*level:.1f}%")
     ax[1].set_xticks(range(J)); ax[1].set_xticklabels([JOINT_NAMES_13[j] for j in jo], rotation=45, ha="right", fontsize=8)
     ax[1].set_title("Per-joint coverage (M2)"); ax[1].set_ylabel("coverage (%)"); ax[1].legend(fontsize=8)
@@ -344,7 +370,7 @@ def main():
     ax[2].set_title("Learned q_hat (m) vs input-unc bin\n(>0 inflate, <0 tighten)")
     ax[2].set_xlabel("input-unc bin"); ax[2].set_ylabel("q_hat (m), frame-mean")
     ax[2].legend(fontsize=6, ncol=2)
-    fig.suptitle(f"Conditional conformal calibration  (target {100*level:.1f}%, base={args.base})", fontsize=13)
+    fig.suptitle(f"Conditional conformal calibration + SARA comparison  (target {100*level:.1f}%, base={args.base})", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig_path = os.path.join(out_dir, "conformal_calibration.png")
     fig.savefig(fig_path, dpi=130)

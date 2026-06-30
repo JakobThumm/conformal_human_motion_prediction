@@ -372,7 +372,7 @@ def compute_sara_predictions(
     last_input_poses: np.ndarray,
     prediction_horizon_times: list[float],
     v_human: float = 2.0,
-    measurement_uncertainty: float = 0.0
+    measurement_uncertainty: Union[float, np.ndarray] = 0.0
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute the reachable set with the constant velocity model of SARA.
 
@@ -383,14 +383,34 @@ def compute_sara_predictions(
         prediction_horizon_times: time horizons for the predictions. Shape: [T]
         v_human: Maximal velocity of the human in m/s.
         measurement_uncertainty: Uncertainty in the human pose estimate in m.
+            Can be either a scalar (float) or a per-joint matrix of shape [N, J].
     Returns:
         - Prediction: last_input_poses repeated for all T. Shape: [N, T, J, 3]
         - Radius: Radius of reachable set spheres in mm with shape: [N, T, J]
     """
-    radius = np.array([measurement_uncertainty * 1000 + time * (v_human * 1000) for time in prediction_horizon_times])
-    radius = np.repeat(radius[np.newaxis, ...], last_input_poses.shape[0], axis=0)
-    radius = np.repeat(radius[:, :, np.newaxis], last_input_poses.shape[1], axis=2)
-    predictions = np.repeat(last_input_poses[:, np.newaxis, ...], len(prediction_horizon_times), axis=1)
+    N = last_input_poses.shape[0]
+    J = last_input_poses.shape[1]
+    T = len(prediction_horizon_times)
+
+    # Handle scalar or matrix uncertainty
+    if isinstance(measurement_uncertainty, (float, int)):
+        # Scalar case: broadcast to [N, J]
+        uncertainty_mm = np.full((N, J), measurement_uncertainty * 1000)
+    else:
+        # Matrix case: convert to mm
+        uncertainty_mm = np.asarray(measurement_uncertainty)
+        if uncertainty_mm.shape != (N, J):
+            raise ValueError(f"measurement_uncertainty must be a scalar or have shape ({N}, {J}), got {uncertainty_mm.shape}")
+        uncertainty_mm = uncertainty_mm * 1000
+
+    # Compute radius: [T, N, J] then transpose to [N, T, J]
+    radius = np.array([
+        uncertainty_mm + t * (v_human * 1000)
+        for t in prediction_horizon_times
+    ])  # [T, N, J]
+    radius = radius.transpose(1, 0, 2)  # [N, T, J]
+
+    predictions = np.repeat(last_input_poses[:, np.newaxis, ...], T, axis=1)
     return predictions, radius
 
 

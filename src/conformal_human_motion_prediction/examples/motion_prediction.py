@@ -240,12 +240,20 @@ def main():
     dt = 1.0 / FPS
     prediction_horizon_times = [(t + 1) * dt for t in range(PREDICTION_HORIZON_LENGTH)]
 
-    # Evaluate SARA-style
+    # Use per-joint input uncertainty from the last frame instead of fixed uncertainty
+    if input_covariances is not None:
+        # Convert input covariances to set radii (in m)
+        input_uncertainty_m = convert_covariance_matrices_to_set(input_covariances, likelihood=SET_LIKELIHOOD) / 1000.0  # [N, J] in m
+    else:
+        # Fallback to fixed uncertainty if no covariance data
+        input_uncertainty_m = SARA_MEASUREMENT_UNCERTAINTY
+
+    # Evaluate SARA-style with per-joint input uncertainty
     sara_predictions, sara_radius = compute_sara_predictions(
         last_input_poses=last_input_poses,
         prediction_horizon_times=prediction_horizon_times,
         v_human=V_HUMAN_ISO,
-        measurement_uncertainty=SARA_MEASUREMENT_UNCERTAINTY,
+        measurement_uncertainty=input_uncertainty_m,
     )
     coverage_stats_sara, _ = simple_coverage_stats_sara(
         predictions=sara_predictions,

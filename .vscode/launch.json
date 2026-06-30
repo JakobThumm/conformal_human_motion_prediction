@@ -355,10 +355,9 @@
       "args": [
           "--data_path", "datasets/",
           "--dataset_name", "Human36mMotionDataset3DWithInputUncertainty",
-          "--split", "validation",
-          //"--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
-          "--model_save_path", "models/motion_prediction/cov_p2p4/checkpoints/stage_4/dct_pose_transformer.pickle",
-          //"--enable_ood",
+          "--split", "test",
+          "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
+          "--enable_ood",
           "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"
       ]
     },
@@ -490,7 +489,7 @@
         // it no longer fits. Tune to the GPU you have:
         //   * FREE GPU            -> "512" (or "1024"): fastest steady-state (~0.25 s/active pose).
         //   * SHARED/CONTESTED GPU-> "128": fits in ~1-2 GB free VRAM; a touch slower, larger never OOMs.
-        "--gpu_a_chunk", "2048",
+        "--gpu_a_chunk", "512",
         // Per-instance failure-geometry dump -- works on BOTH backends (the GPU flags the rare
         // verified-but-contact pairs; the CPU rebuilds their geometry). --max_failures caps per pose.
         "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
@@ -498,6 +497,16 @@
         // "--backend", "cpu", "--num_workers", "24",
         // ---- Verify GPU == CPU (optional) ----
         // "--parity", "8", "--gpu_dtype", "float64"    // run both backends on 8 poses, assert equal counts.
+      ]
+    },
+    {
+      "name": "Evaluate Covariance Failures",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "src/conformal_human_motion_prediction/motion_prediction/evaluate_covariance_failures.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--results_file", "results/motion_prediction/motion_prediction_results_test.cloudpickle",
       ]
     },
     {
