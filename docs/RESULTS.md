@@ -2718,28 +2718,28 @@ Settings:
 ```
 
 ==================== Shield simulation results ====================
-Random robot poses     : 1000000
+Random robot poses     : 4000000
 Monitored trajectories : 95
 Eligible human samples : 49139
-Total (pose, traj, human) trials : 4,668,205,000,000
-Intervals without ground-truth robot state (past log end): 3,000,000
-Poses fully culled at level 1: 841880/1000000
+Total (pose, traj, human) trials : 18,672,820,000,000
+Intervals without ground-truth robot state (past log end): 12,000,000
+Poses fully culled at level 1: 3367709/4000000
 Level-5 survivors (detailed-checked): predicted 0.000%, true 0.000% of trials (rest culled by the hierarchy)
 -------------------------------------------------------------------
-Verified (shield says safe) : 4,630,075,996,609  (99.183% of trials)
-True contact                : 14,261,586,125  (0.306% of trials)
-True unsafe contact         : 5,858,145,258  (0.125% of trials)
+Verified (shield says safe) : 18,520,128,924,382  (99.182% of trials)
+True contact                : 57,078,683,021  (0.306% of trials)
+True unsafe contact         : 23,627,754,162  (0.127% of trials)
 -------------------------------------------------------------------
->>> Verified BUT contact        : 0  (0.0000% of verified, 0.0000% of trials)
->>> Verified BUT unsafe contact : 0  (0.0000% of verified, 0.0000% of trials)
+>>> Verified BUT contact        : 1  (0.0000% of verified, 0.0000% of trials)
+>>> Verified BUT unsafe contact : 1  (0.0000% of verified, 0.0000% of trials)
 ===================================================================
 
 ============== PFH_D (dangerous failure rate) per ISO 13849-1 ==============
 Dangerous failure = verified BUT unsafe contact (speed > V_ROBOT_ISO = 0.25 m/s)
-Test cycles N = 4,668,205,000,000   dangerous failures k = 0   t_cycle = 0.004 s
+Test cycles N = 18,672,820,000,000   dangerous failures k = 1   t_cycle = 0.004 s
 confidence |  PFC_D upper (1/cyc) |  PFH_D upper (1/h) | PL
 ------------------------------------------------------------------------
-    0.9900 |            9.865e-13 |          8.878e-07 | d
-    0.9990 |            1.480e-12 |          1.332e-06 | c
-    0.9999 |            1.973e-12 |          1.776e-06 | c
+    0.9900 |            3.555e-13 |          3.200e-07 | d
+    0.9990 |            4.945e-13 |          4.450e-07 | d
+    0.9999 |            6.296e-13 |          5.666e-07 | d
 ============================================================================
