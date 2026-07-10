@@ -21,6 +21,7 @@ def dataloader_from_string(
     seed: int = 0,
     download: bool = False,
     data_path: str = "../datasets",
+    max_target_speed: float = 2.0,
 ):
     torch.backends.cudnn.deterministic = True
     torch.manual_seed(seed)
@@ -41,6 +42,7 @@ def dataloader_from_string(
             shuffle=shuffle,
             seed=seed,
             n_samples=n_samples,
+            max_target_speed=max_target_speed,
         )
     elif dataset_name == "Human36mMotionDataset3DWithInputUncertainty":
         train_loader, valid_loader, test_loader = get_h36m_motion_dataset_with_uncertainty(
@@ -50,6 +52,7 @@ def dataloader_from_string(
             shuffle=shuffle,
             seed=seed,
             n_samples=n_samples,
+            max_target_speed=max_target_speed,
         )
     elif dataset_name == "Human36mMotionDataset3DAugmented":
         train_loader, valid_loader, test_loader = get_h36m_motion_dataset(
@@ -59,6 +62,7 @@ def dataloader_from_string(
             seed=seed,
             n_samples=n_samples,
             augment=True,
+            max_target_speed=max_target_speed,
         )
     elif dataset_name == "Human36mMotionDataset3DWithInputUncertaintyAugmented":
         train_loader, valid_loader, test_loader = get_h36m_motion_dataset_with_uncertainty(
@@ -69,6 +73,7 @@ def dataloader_from_string(
             seed=seed,
             n_samples=n_samples,
             augment=True,
+            max_target_speed=max_target_speed,
         )
     elif dataset_name == "Human36mMotionReducedOutputDataset3D":
         train_loader, valid_loader, test_loader = get_h36m_motion_reduced_output_dataset(

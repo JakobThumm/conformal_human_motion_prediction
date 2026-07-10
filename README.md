@@ -146,17 +146,23 @@ the **YOLO-Pose** model for pose estimation, so retraining RegressFlow is out of
 — just download the checkpoints (§2.1).
 
 **Motion prediction.** The DCTPoseTransformer is trained in stages (pose-only → uncertainty head →
-end-to-end → final), with optional Z-rotation/scale augmentation (`--augment`):
+end-to-end → final), with optional Z-rotation/scale augmentation (`--augment`). This is the deployed
+`final_model` (cov_p2p4) recipe: the set-radius pinball loss (`--lambda_pinball`, `--set_likelihood`)
+and Stage-4 input-uncertainty tail reweighting (`--tail_reweight_gamma`, `--tail_reweight_max`)
+self-calibrate the predicted covariance toward the target coverage.
 
 ```bash
 python -m conformal_human_motion_prediction.motion_prediction.train_motion_prediction_model \
     --stage 1 --data_path datasets/ --batch_size 256 \
     --d_model 128 --nhead 4 --num_layers 2 \
-    --stage1_epochs 15 --stage2_epochs 10 --stage3_epochs 10 --stage4_epochs 40 \
+    --stage1_epochs 80 --stage2_epochs 50 --stage3_epochs 50 --stage4_epochs 50 \
     --learning_rate 0.0001 --use_lr_schedule --lr_schedule_type cosine \
-    --lr_warmup_epochs 3 --lr_min_factor 0.1 \
+    --lr_warmup_epochs 5 --lr_min_factor 0.1 \
     --weight_decay 0.000001 --max_grad_norm 0.6796845430167515 \
-    --augment --wandb_project motion-prediction --use_wandb
+    --augment --max_target_speed 0 --seed 420 \
+    --lambda_pinball 1.0 --set_likelihood 0.9999 \
+    --tail_reweight_gamma 1.0 --tail_reweight_max 5.0 \
+    --wandb_project motion-prediction --use_wandb
 ```
 
 Checkpoints land in `models/motion_prediction/<run_id>/checkpoints/stage_*/`. Turn a finished run

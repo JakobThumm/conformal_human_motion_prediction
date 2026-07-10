@@ -204,6 +204,7 @@ class TrainingConfig:
         data_path: str = "../datasets",
         seed: int = 420,
         augment: bool = False,
+        max_target_speed: float = 2.0,
 
         # Coverage-improvement options (default OFF -> original pipeline unchanged)
         # P2: pinball/quantile loss on the deployed set radius (stages 2/3/4).
@@ -257,6 +258,7 @@ class TrainingConfig:
         self.data_path = data_path
         self.seed = seed
         self.augment = augment
+        self.max_target_speed = max_target_speed
 
         # Coverage-improvement options
         self.lambda_pinball = lambda_pinball
@@ -1123,7 +1125,8 @@ def load_dataloaders_for_stage(
         seed=config.seed,
         download=False,
         data_path=config.data_path,
-        n_samples=n_samples
+        n_samples=n_samples,
+        max_target_speed=config.max_target_speed,
     )
     return train_loader, valid_loader, test_loader
 
@@ -1279,6 +1282,7 @@ def objective(trial: "optuna.Trial", base_args) -> float:
         data_path=base_args.data_path,
         seed=base_args.seed,
         augment=base_args.augment,
+        max_target_speed=base_args.max_target_speed,
         run_id=trial_run_id,
         wandb_project=base_args.wandb_project,
         wandb_entity=base_args.wandb_entity,
@@ -1499,6 +1503,7 @@ def main(args):
             data_path=args.data_path,
             seed=args.seed,
             augment=args.augment,
+            max_target_speed=args.max_target_speed,
             lambda_pinball=args.lambda_pinball,
             set_likelihood=args.set_likelihood,
             tail_reweight_gamma=args.tail_reweight_gamma,
@@ -1754,6 +1759,9 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=420)
     parser.add_argument("--augment", action="store_true", default=False,
                         help="Apply Z-rotation and scale augmentation to training data")
+    parser.add_argument("--max_target_speed", type=float, default=2.0,
+                        help="Too-fast target filter threshold in m/s (default 2.0 = ISO V_HUMAN_ISO). "
+                             "Raise it to keep faster motions; set <=0 or inf to disable the filter.")
     parser.add_argument("--n_samples", type=int, default=None,
                         help="Number of samples to use from dataset (for debugging)")
 

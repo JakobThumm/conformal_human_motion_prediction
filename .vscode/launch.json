@@ -476,9 +476,9 @@
       },
       "args": [
         // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
-        "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
-        "--num_robot_poses", "1000000",   // production: ~1E6 (needed for PL_C); the GPU path culls ~85% for free.
-        "--pose_radius", "10.0",       // production: 10.0 (far poses then cull at level 1 on the CPU).
+        "--results_file", "results/motion_prediction/motion_prediction_results_test.cloudpickle",
+        "--num_robot_poses", "4000000",   // ~4E6 needed for PL_D
+        "--pose_radius", "10.0",
         "--pose_z_offset", "0.2",
         "--seed", "0",
         "--mask_ood",
@@ -489,7 +489,7 @@
         // it no longer fits. Tune to the GPU you have:
         //   * FREE GPU            -> "512" (or "1024"): fastest steady-state (~0.25 s/active pose).
         //   * SHARED/CONTESTED GPU-> "128": fits in ~1-2 GB free VRAM; a touch slower, larger never OOMs.
-        "--gpu_a_chunk", "512",
+        "--gpu_a_chunk", "128",
         // Per-instance failure-geometry dump -- works on BOTH backends (the GPU flags the rare
         // verified-but-contact pairs; the CPU rebuilds their geometry). --max_failures caps per pose.
         "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
@@ -614,7 +614,7 @@
       ]
     },
     {
-      "name": "Train Motion Prediction Model (Stage 1)",
+      "name": "Train Motion Prediction Model",
       "type": "debugpy",
       "request": "launch",
       "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
@@ -626,172 +626,10 @@
           "--d_model", "128",
           "--nhead", "4",
           "--num_layers", "2",
-          "--stage1_epochs", "50",
-          "--stage2_epochs", "15",
-          "--stage3_epochs", "15",
-          "--stage4_epochs", "15",
-          "--learning_rate", "0.001",
-          "--seed", "0",
-          "--use_lr_schedule",
-          "--lr_schedule_type", "cosine",
-          "--lr_warmup_epochs", "3",
-          "--lr_min_factor", "0.1",
-          "--weight_decay", "0.000001",
-          "--max_grad_norm", "0.6796845430167515",
-          "--wandb_project", "motion-prediction",
-          "--use_wandb"
-      ]
-    },
-    {
-      "name": "Train Motion Prediction Model RLE (Stage 1)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
-      "console": "integratedTerminal",
-      "args": [
-          "--stage", "1",
-          "--data_path", "datasets/",
-          "--batch_size", "256",
-          "--d_model", "128",
-          "--nhead", "4",
-          "--num_layers", "2",
-          "--stage1_epochs", "10",
-          "--stage2_epochs", "15",
-          "--stage3_epochs", "15",
-          "--learning_rate", "0.001",
-          "--seed", "0",
-          "--use_lr_schedule",
-          "--lr_schedule_type", "cosine",
-          "--lr_warmup_epochs", "3",
-          "--lr_min_factor", "0.1",
-          "--weight_decay", "0.000001",
-          "--max_grad_norm", "0.6796845430167515",
-          "--wandb_project", "motion-prediction",
-          "--use_wandb",
-          "--use_rle_model",
-          "--flow_hidden_dim", "64",
-          "--flow_n_layers", "6",
-          "--sigma_init_mm", "20.0"
-      ]
-    },
-    {
-      "name": "Train Motion Prediction Model from Transferred Weights (Augment)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
-      "console": "integratedTerminal",
-      "args": [
-          "--stage", "1",
-          "--data_path", "datasets/",
-          "--batch_size", "256",
-          "--d_model", "128",
-          "--nhead", "4",
-          "--num_layers", "2",
-          // "--init_weights_path", "models/motion_prediction/dct_pose_transformer_transferred.pickle",
-          "--stage1_epochs", "15",
-          "--stage2_epochs", "10",
-          "--stage3_epochs", "10",
-          "--stage4_epochs", "40",
-          "--learning_rate", "0.0001",
-          "--use_lr_schedule",
-          "--lr_schedule_type", "cosine",
-          "--lr_warmup_epochs", "3",
-          "--lr_min_factor", "0.1",
-          "--weight_decay", "0.000001",
-          "--max_grad_norm", "0.6796845430167515",
-          "--wandb_project", "motion-prediction",
-          "--use_wandb",
-          "--augment"
-      ]
-    },
-    {
-      // The final/deployed setup: P2 set-radius pinball loss + P4 input-uncertainty tail
-      // reweighting, which self-calibrate the predicted covariance so its radius hits the target
-      // coverage (this is the cov_p2p4 model -> models/motion_prediction/final_model).
-      "name": "Train Motion Prediction Model P2+P4 (cov_p2p4, final)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
-      "console": "integratedTerminal",
-      "args": [
-          "--stage", "1",
-          "--data_path", "datasets/",
-          "--batch_size", "256",
-          "--d_model", "128",
-          "--nhead", "4",
-          "--num_layers", "2",
-          "--stage1_epochs", "50",
-          "--stage2_epochs", "20",
-          "--stage3_epochs", "30",
-          "--stage4_epochs", "40",
-          "--learning_rate", "0.0001",
-          "--use_lr_schedule",
-          "--lr_schedule_type", "cosine",
-          "--lr_warmup_epochs", "3",
-          "--lr_min_factor", "0.1",
-          "--weight_decay", "0.000001",
-          "--max_grad_norm", "0.6796845430167515",
-          "--augment",
-          // P2: set-radius pinball/quantile loss toward the target coverage tau (stages 2/3/4).
-          "--lambda_pinball", "1.0",
-          "--set_likelihood", "0.995",
-          // P4: reweight the loss on high input-uncertainty joints in stage 4.
-          "--tail_reweight_gamma", "1.0",
-          "--tail_reweight_max", "5.0",
-          "--wandb_project", "motion-prediction",
-          "--use_wandb"
-      ]
-    },
-    {
-      "name": "Train Motion Prediction Model RLE from Transferred Weights",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
-      "console": "integratedTerminal",
-      "args": [
-          "--stage", "1",
-          "--data_path", "datasets/",
-          "--batch_size", "256",
-          "--d_model", "128",
-          "--nhead", "4",
-          "--num_layers", "2",
-          "--init_weights_path", "models/motion_prediction/dct_pose_transformer_transferred.pickle",
-          "--stage1_epochs", "10",
-          "--stage2_epochs", "15",
-          "--stage3_epochs", "15",
-          "--learning_rate", "0.0001",
-          "--use_lr_schedule",
-          "--lr_schedule_type", "cosine",
-          "--lr_warmup_epochs", "3",
-          "--lr_min_factor", "0.1",
-          "--weight_decay", "0.000001",
-          "--max_grad_norm", "0.6796845430167515",
-          "--wandb_project", "motion-prediction",
-          "--use_wandb",
-          "--use_rle_model",
-          "--flow_hidden_dim", "64",
-          "--flow_n_layers", "6",
-          "--sigma_init_mm", "20.0"
-      ]
-    },
-    {
-      "name": "Train Motion Prediction Model from Transferred Weights Stage 4",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
-      "console": "integratedTerminal",
-      "args": [
-          "--stage", "4",
-          "--data_path", "datasets/",
-          "--batch_size", "256",
-          "--d_model", "128",
-          "--nhead", "4",
-          "--num_layers", "2",
-          "--init_weights_path", "models/motion_prediction/dct_pose_transformer_transferred.pickle",
-          "--stage1_epochs", "30",
-          "--stage2_epochs", "15",
-          "--stage3_epochs", "15",
-          "--stage4_epochs", "40",
+          "--stage1_epochs", "80",
+          "--stage2_epochs", "50",
+          "--stage3_epochs", "50",
+          "--stage4_epochs", "50",
           "--learning_rate", "0.0001",
           "--use_lr_schedule",
           "--lr_schedule_type", "cosine",
@@ -799,9 +637,17 @@
           "--lr_min_factor", "0.1",
           "--weight_decay", "0.000001",
           "--max_grad_norm", "0.6796845430167515",
+          "--augment",
+          "--max_target_speed", "0",
+          "--seed", "420",
+          // set-radius pinball/quantile loss toward the target coverage tau (stages 2/3/4).
+          "--lambda_pinball", "1.0",
+          "--set_likelihood", "0.9999",
+          // reweight the loss on high input-uncertainty joints in stage 4.
+          "--tail_reweight_gamma", "1.0",
+          "--tail_reweight_max", "5.0",
           "--wandb_project", "motion-prediction",
-          "--use_wandb",
-          "--run_id", "0coa23la"
+          "--use_wandb"
       ]
     },
     {
@@ -812,32 +658,6 @@
       "console": "integratedTerminal",
       "args": [
           "--split", "all"
-      ]
-    },
-    {
-      "name": "Train Motion Prediction with Optuna (Stage 1)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "src/conformal_human_motion_prediction/motion_prediction/train_motion_prediction_model.py",
-      "console": "integratedTerminal",
-      "args": [
-          "--use_optuna",
-          "--optuna_n_trials", "30",
-          "--optuna_study_name", "motion_prediction_stage1_optimization",
-          "--optuna_storage", "sqlite:///optuna_motion_stage1.db",
-          "--optuna_pruner_warmup", "10",
-          "--optuna_pruner_interval", "10",
-          "--data_path", "datasets/",
-          "--batch_size", "256",
-          "--d_model", "128",
-          "--nhead", "4",
-          "--num_layers", "2",
-          "--stage1_epochs", "50",
-          "--stage2_epochs", "30",
-          "--stage3_epochs", "30",
-          "--seed", "420",
-          "--wandb_project", "motion-prediction-optuna",
-          "--use_wandb"
       ]
     },
     {
@@ -859,9 +679,11 @@
           "--d_model", "128",
           "--nhead", "4",
           "--num_layers", "2",
-          "--stage1_epochs", "50",
-          "--stage2_epochs", "30",
-          "--stage3_epochs", "30",
+          "--stage1_epochs", "80",
+          "--stage2_epochs", "50",
+          "--stage3_epochs", "50",
+          "--stage4_epochs", "50",
+          "--augment",
           "--seed", "420",
           "--wandb_project", "motion-prediction-optuna",
           "--use_wandb"

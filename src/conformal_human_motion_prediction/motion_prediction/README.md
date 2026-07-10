@@ -1,356 +1,248 @@
 # Motion Prediction Model Training
 
-This directory contains the training script for the DCT Pose Transformer model for human motion prediction with uncertainty quantification.
+Training script for the **DCT Pose Transformer**, the human motion-prediction model with
+uncertainty quantification used in this repo. The model, loss functions, and the reduced-output
+variant live in [`models/dct_pose_transformer_pytorch_attn.py`](../models/dct_pose_transformer_pytorch_attn.py);
+the optional RLE (normalising-flow) variant is in
+[`models/dct_pose_transformer_rle.py`](../models/dct_pose_transformer_rle.py).
+
+Run everything from the repo root with the venv interpreter (`.venv/bin/python`) and, on GPU,
+`XLA_PYTHON_CLIENT_PREALLOCATE=false` (see the top-level [`README.md`](../../../README.md) and
+`CLAUDE.md`). Scripts are invoked as modules:
+
+```bash
+XLA_PYTHON_CLIENT_PREALLOCATE=false python -m \
+    conformal_human_motion_prediction.motion_prediction.train_motion_prediction_model --stage 1 ...
+```
 
 ## Overview
 
-The training script (`train_motion_prediction_model.py`) implements a three-stage training process:
+The model predicts `PREDICTION_HORIZON_LENGTH = 10` future frames of `N_JOINTS = 13` 3D joints from
+`INPUT_HORIZON_LENGTH = 50` input frames, together with a per-joint Gaussian covariance (Cholesky
+factor `L`). Training runs in **four stages**, each with its own fresh learning-rate schedule:
 
-1. **Stage 1 (Pose Only)**: Train the full pose prediction transformer without uncertainty estimation
-   - **Trains**: All parameters (transformer, decoders, embeddings)
-   - **Loss**: `MAE(predicted_poses, target_poses)`
+1. **Stage 1 — Pose Only.** Train the full transformer to predict poses, no uncertainty.
+   - **Trains:** all parameters (transformer blocks, decoders, embeddings).
+   - **Loss:** `MAE(pred_poses, target_poses)` (`pose_prediction_loss`).
 
-2. **Stage 2 (Uncertainty Head Only)**: Train ONLY the uncertainty head with frozen backbone
-   - **Trains**: `uncertainty_head` parameters ONLY
-   - **Frozen**: Transformer blocks, pose decoders, frequency embeddings
-   - **Loss**: `GaussianNLL + λ * MAE` (λ decays 1→0 over first 5 epochs)
+2. **Stage 2 — Uncertainty Head (frozen backbone).** Learn the covariance head on top of fixed pose
+   features. The backbone is frozen by zeroing its gradients in the backward pass.
+   - **Trains:** `uncertainty_head` parameters only.
+   - **Loss:** `GaussianNLL(pred, target, L)` (`gaussian_nll_from_cholesky`); the pose-loss weight is
+     `0`. Add the P2 pinball term with `--lambda_pinball > 0` (see below).
 
-3. **Stage 3 (End-to-End)**: Fine-tune the complete model end-to-end
-   - **Trains**: All parameters
-   - **Loss**: `GaussianNLL + MAE`
+3. **Stage 3 — End-to-End.** Fine-tune the whole model jointly.
+   - **Trains:** all parameters.
+   - **Loss:** `GaussianNLL + MAE` (`+ λ_pinball · pinball` if enabled).
 
-## Features
+4. **Stage 4 — End-to-End with Input Uncertainty.** Retrain with the reported *input* uncertainty
+   appended to each frame. A fresh model with `input_dim = 156` (`N_JOINTS·3 = 39` pose coords +
+   `N_JOINTS·9 = 117` per-joint input covariance) is built, the Stage-3 weights are transferred via
+   `merge_params`, and the new input-uncertainty parameters are initialised from scratch.
+   - **Trains:** all parameters.
+   - **Loss:** `GaussianNLL + MAE` (`+ λ_pinball · pinball`), with optional P4 tail reweighting.
+   - **Dataset:** `Human36mMotionDataset3DWithInputUncertainty` (Stages 1–3 use
+     `Human36mMotionDataset3D`); the `Augmented` variant is used when `--augment` is set.
 
-- **JAX/Flax Implementation**: Fully optimized with `jax.jit` and `jax.grad`
-- **Checkpoint Management**: Automatic checkpoint saving/loading using Orbax
-- **Configuration Management**: JSON-based config files for reproducibility
-- **Weights & Biases Integration**: Automatic experiment tracking and logging
-- **MPJPE Metrics**: Mean Per Joint Position Error evaluation
-- **Multi-Stage Training**: Flexible stage-based training pipeline
+### Coverage-calibration options (P2 / P4)
+
+These are **off by default** (the plain pipeline is unchanged). The deployed `final_model`
+(`cov_p2p4`) enables both:
+
+- **P2 — set-radius pinball loss** (`--lambda_pinball > 0`, `--set_likelihood τ`): a pinball/quantile
+  loss on the deployed spherical set radius `q = sqrt(λ_max(Σ)·χ²₃(τ))`, applied in **Stages 2/3/4**.
+  It shapes the covariance directly toward the target coverage `τ` (`set_radius_pinball_loss`).
+- **P4 — input-uncertainty tail reweighting** (`--tail_reweight_gamma > 0`, `--tail_reweight_max`):
+  up-weights high-input-uncertainty joint-frames in the loss. **Stage 4 only** (needs the input
+  covariance block).
 
 ## Quick Start
 
-### Basic Training (All Stages)
+### Full four-stage training (deployed `final_model` recipe)
+
+`--stage 1` runs Stages 1→4 sequentially in one process. This is the canonical recipe kept in sync
+with the `Train Motion Prediction Model` entry in [`.vscode/launch.json`](../../../.vscode/launch.json)
+and the top-level README:
 
 ```bash
-python human_pose_pipeline/motion_prediction/train_motion_prediction_model.py \
-    --data_path datasets/ \
-    --wandb_project motion-prediction
+XLA_PYTHON_CLIENT_PREALLOCATE=false python -m \
+    conformal_human_motion_prediction.motion_prediction.train_motion_prediction_model \
+    --stage 1 --data_path datasets/ --batch_size 256 \
+    --d_model 128 --nhead 4 --num_layers 2 \
+    --stage1_epochs 80 --stage2_epochs 50 --stage3_epochs 50 --stage4_epochs 50 \
+    --learning_rate 0.0001 --use_lr_schedule --lr_schedule_type cosine \
+    --lr_warmup_epochs 5 --lr_min_factor 0.1 \
+    --weight_decay 0.000001 --max_grad_norm 0.6796845430167515 \
+    --augment --max_target_speed 0 --seed 420 \
+    --lambda_pinball 1.0 --set_likelihood 0.9999 \
+    --tail_reweight_gamma 1.0 --tail_reweight_max 5.0 \
+    --wandb_project motion-prediction --use_wandb
 ```
 
-This will:
-- Auto-generate a run_id from wandb
-- Train all 3 stages sequentially
-- Save checkpoints to `human_pose_pipeline/models/motion_prediction/<run_id>/checkpoints/`
-- Save config to `human_pose_pipeline/models/motion_prediction/<run_id>/dct_pose_transformer_args.json`
-
-### Training a Specific Stage
+This auto-generates a `run_id` from W&B, trains all four stages, and writes checkpoints + config to
+`models/motion_prediction/<run_id>/` (layout below). Turn a finished run into the deployable models
+with [`scripts/build_motion_models.py`](../../../scripts/build_motion_models.py):
 
 ```bash
-# Start from Stage 1
-python human_pose_pipeline/motion_prediction/train_motion_prediction_model.py \
-    --stage 1 \
-    --data_path datasets/
-
-# Resume and continue from Stage 2
-python human_pose_pipeline/motion_prediction/train_motion_prediction_model.py \
-    --stage 2 \
-    --resume \
-    --data_path datasets/
-
-# Resume and continue from Stage 3
-python human_pose_pipeline/motion_prediction/train_motion_prediction_model.py \
-    --stage 3 \
-    --resume \
-    --data_path datasets/
+python scripts/build_motion_models.py --run_dir models/motion_prediction/<run_id>
+# -> models/motion_prediction/final_model/ (full) and final_model_for_ood/ (reduced output)
 ```
 
-### Custom Run ID
+### Resuming / starting from a later stage
+
+`--stage N --resume` loads the latest checkpoint from stage `N-1` and trains stages `N`→4. (With
+`--stage 1 --resume` it loads the latest checkpoint found across all stages.) Pass the same
+`--run_id` so it finds the run directory and resumes the same W&B run:
 
 ```bash
-python human_pose_pipeline/motion_prediction/train_motion_prediction_model.py \
-    --run_id my_experiment_v1 \
-    --data_path datasets/
+# Continue an interrupted run at Stage 3 (loads the end-of-Stage-2 checkpoint)
+python -m conformal_human_motion_prediction.motion_prediction.train_motion_prediction_model \
+    --stage 3 --resume --run_id <run_id> --data_path datasets/ ...   # same hyperparameters
 ```
 
-### Training Without Weights & Biases
+On resume the existing `dct_pose_transformer_args.json` in the run directory is reloaded, so the
+originally saved hyperparameters win over the command line (use `--new_config` to override).
+
+### Quick local test (no W&B, few epochs)
 
 ```bash
-python human_pose_pipeline/motion_prediction/train_motion_prediction_model.py \
-    --run_id local_test \
-    --no_wandb \
-    --data_path datasets/
+python -m conformal_human_motion_prediction.motion_prediction.train_motion_prediction_model \
+    --run_id test_run --no_wandb --data_path datasets/ \
+    --stage1_epochs 2 --stage2_epochs 2 --stage3_epochs 2 --stage4_epochs 2 \
+    --batch_size 64 --n_samples 2000
 ```
 
-## Configuration
+### Initialising from transferred weights
 
-### Default Configuration
-
-A default configuration is provided in `configs/default_training_config.json`:
-
-```json
-{
-  "d_model": 128,
-  "nhead": 4,
-  "num_layers": 2,
-  "seq_len": 50,
-  "seq_len_output": 10,
-  "batch_size": 256,
-  "learning_rate": 0.0001,
-  "weight_decay": 1e-06,
-  "max_grad_norm": 0.01,
-  "stage1_epochs": 50,
-  "stage2_epochs": 20,
-  "stage3_epochs": 30,
-  ...
-}
-```
-
-### Customizing Hyperparameters
-
-```bash
-python human_pose_pipeline/motion_prediction/train_motion_prediction_model.py \
-    --d_model 256 \
-    --nhead 8 \
-    --num_layers 4 \
-    --batch_size 128 \
-    --learning_rate 5e-5 \
-    --stage1_epochs 100 \
-    --stage2_epochs 30 \
-    --stage3_epochs 50
-```
+`--init_weights_path <pickle>` loads parameters from a pickle (e.g. PyTorch weights transferred to
+JAX) via `merge_params` before training, keeping any parameters the source does not provide.
 
 ## Command-Line Arguments
 
-### Run Configuration
-- `--run_id`: Unique run identifier (optional, defaults to wandb run id or timestamp)
-- `--stage`: Training stage to start from (1, 2, or 3)
-- `--resume`: Resume from latest checkpoint
-- `--new_config`: Create new config even if one exists
+Defaults below are the script's argparse defaults; the canonical recipe above overrides several of
+them (notably `--batch_size 256`, `--learning_rate 1e-4`, `--use_lr_schedule`, `--augment`, and the
+P2/P4 flags).
 
-### Model Hyperparameters
-- `--d_model`: Model dimension (default: 128)
-- `--nhead`: Number of attention heads (default: 4)
-- `--num_layers`: Number of transformer layers (default: 2)
-- `--seq_len`: Input sequence length (default: 50)
-- `--seq_len_output`: Output sequence length (default: 10)
+### Run configuration
+- `--stage`: stage to start from, `1`–`4`. Runs this stage through Stage 4 (default: `1`).
+- `--run_id`: run identifier (default: W&B run id, or a timestamp when `--no_wandb`).
+- `--resume`: resume from the latest checkpoint of stage `stage-1`.
+- `--new_config`: ignore an existing saved config and rebuild it from the command line.
+- `--init_weights_path`: pickle of initial weights to merge before training (default: none).
+- `--n_samples`: cap dataset size for debugging (default: full dataset).
 
-### Training Hyperparameters
-- `--batch_size`: Batch size (default: 256)
-- `--learning_rate`: Learning rate (default: 1e-4)
-- `--weight_decay`: Weight decay (default: 1e-6)
-- `--max_grad_norm`: Max gradient norm for clipping (default: 0.01)
+### Model hyperparameters
+- `--d_model` (128), `--nhead` (4), `--num_layers` (2)
+- `--seq_len` (50, input frames), `--seq_len_output` (10, predicted frames)
 
-### Stage Epochs
-- `--stage1_epochs`: Epochs for Stage 1 (default: 50)
-- `--stage2_epochs`: Epochs for Stage 2 (default: 20)
-- `--stage2_lambda_decay_epochs`: Epochs for lambda decay in Stage 2 (default: 5)
-- `--stage3_epochs`: Epochs for Stage 3 (default: 30)
+### Training hyperparameters
+- `--batch_size` (32), `--learning_rate` (1e-3), `--weight_decay` (None), `--max_grad_norm` (None)
+- `--use_lr_schedule` (off by default), `--lr_schedule_type` (`cosine` | `exponential`),
+  `--lr_warmup_epochs` (5), `--lr_min_factor` (0.01, minimum LR as a fraction of the initial LR)
 
-### Data Settings
-- `--data_path`: Path to datasets directory (default: ../datasets)
-- `--seed`: Random seed (default: 420)
+### Stage epochs
+- `--stage1_epochs` (50), `--stage2_epochs` (20), `--stage3_epochs` (30), `--stage4_epochs` (10)
+
+### Data settings
+- `--data_path` (`../datasets`), `--seed` (420)
+- `--augment`: Z-rotation + scale augmentation on the training set (off by default)
+- `--max_target_speed`: too-fast target filter in m/s (default 2.0 = ISO `V_HUMAN`); set `<= 0` to
+  disable
+
+### Coverage calibration (P2 / P4)
+- `--lambda_pinball` (0.0 = off), `--set_likelihood` (0.995, target coverage τ)
+- `--tail_reweight_gamma` (0.0 = off, Stage 4 only), `--tail_reweight_max` (5.0)
+
+### RLE model (optional variant)
+- `--use_rle_model`: use `DCTPoseTransformerRLE` (normalising-flow uncertainty head) instead
+- `--flow_hidden_dim` (64), `--flow_n_layers` (6, even), `--sigma_init_mm` (20.0)
 
 ### Weights & Biases
-- `--wandb_project`: W&B project name (default: motion-prediction)
-- `--wandb_entity`: W&B entity/username
-- `--use_wandb`: Enable W&B logging (default: True)
-- `--no_wandb`: Disable W&B logging
+- `--wandb_project` (`motion-prediction`), `--wandb_entity` (None)
+- `--use_wandb` (on by default), `--no_wandb` (disable)
+
+### Optuna hyperparameter search
+- `--use_optuna`, `--optuna_n_trials` (100), `--optuna_study_name`, `--optuna_storage`
+  (e.g. `sqlite:///optuna.db`), `--optuna_optimize_all_stages`, `--optuna_pruner_warmup` (5),
+  `--optuna_pruner_interval` (1). Requires the optional `optuna` dependency (`dev` extra).
 
 ## VS Code Debugging
 
-Five debug configurations are available in `.vscode/launch.json`:
+Two ready-made configurations live in [`.vscode/launch.json`](../../../.vscode/launch.json):
 
-1. **Train Motion Prediction Model (Stage 1)**: Start fresh Stage 1 training
-2. **Train Motion Prediction Model (Stage 2)**: Resume and train Stage 2
-3. **Train Motion Prediction Model (Stage 3)**: Resume and train Stage 3
-4. **Train Motion Prediction Model (Full Pipeline)**: Train all stages sequentially
-5. **Train Motion Prediction Model (No W&B)**: Quick test without W&B
+1. **Train Motion Prediction Model** — the full four-stage `final_model` recipe above.
+2. **Train Motion Prediction with Optuna (All Stages)** — Optuna search over all stages.
 
-Press `F5` in VS Code and select the desired configuration from the dropdown.
+Press `F5` and pick one from the dropdown.
 
-## Logged Metrics
+## Configuration files
 
-The following metrics are logged to Weights & Biases during training:
+There is no separate hand-maintained config file to edit. On the first run for a `run_id`, the
+resolved `TrainingConfig` is written to
+`models/motion_prediction/<run_id>/dct_pose_transformer_args.json`; later runs with the same
+`run_id` reload it (unless `--new_config`). Each stage export also writes its own
+`dct_pose_transformer_args.json` next to the pickle for the eval/OOD pipeline.
 
-### Training Metrics
-- `train/loss`: Total training loss
-- `train/nll_loss`: Negative log-likelihood loss (Stages 2 & 3)
-- `train/pose_loss`: Pose prediction MAE loss
-- `train/lambda`: Lambda weight for Stage 2
+## Artifacts & Checkpoints
 
-### Evaluation Metrics
-- `eval/val_nll_loss`: Validation negative log-likelihood
-- `eval/val_pose_loss`: Validation pose prediction MAE
-- `eval/val_mpjpe`: Validation Mean Per Joint Position Error (mm)
-- `eval/val_mpjpe_std`: Standard deviation of MPJPE
-
-### Test Metrics
-- `test_val_nll_loss`: Final test NLL
-- `test_val_pose_loss`: Final test pose loss
-- `test_val_mpjpe`: Final test MPJPE
-- `test_val_mpjpe_std`: Final test MPJPE std
-
-## Checkpoints
-
-Checkpoints are saved:
-- Every 10 epochs during training
-- At the end of each stage
-- In `human_pose_pipeline/models/motion_prediction/<run_id>/checkpoints/`
-
-Each checkpoint contains:
-- Model parameters
-- Optimizer state
-- Training step information
-
-## Directory Structure
-
-After training, your directory structure will look like:
+Checkpoints are written with Orbax every 10 epochs and at the end of each stage. The step number is
+the **epoch count within that stage** (not cumulative), so the final checkpoint of a stage is
+`checkpoint_<stageN_epochs>`. At each stage end the parameters are also exported as a portable
+pickle for the eval/OOD pipeline.
 
 ```
-human_pose_pipeline/models/motion_prediction/<run_id>/
-├── dct_pose_transformer_args.json    # Configuration file
+models/motion_prediction/<run_id>/
+├── dct_pose_transformer_args.json          # resolved run config
 └── checkpoints/
-    ├── checkpoint_10/                # Epoch 10 checkpoint
-    ├── checkpoint_20/                # Epoch 20 checkpoint
-    ├── checkpoint_50/                # End of Stage 1
-    ├── checkpoint_70/                # End of Stage 2
-    └── checkpoint_100/               # End of Stage 3
+    ├── stage_1/
+    │   ├── checkpoint_10 … checkpoint_80    # Orbax checkpoints (10-epoch cadence + stage end)
+    │   ├── dct_pose_transformer.pickle      # exported weights (portable)
+    │   └── dct_pose_transformer_args.json   # exported args for this stage
+    ├── stage_2/  …  checkpoint_50
+    ├── stage_3/  …  checkpoint_50
+    └── stage_4/  …  checkpoint_50
 ```
 
-## Training Strategy & Parameter Freezing
+(The `checkpoint_N` values shown match the 80/50/50/50 canonical recipe.)
 
-### Why Three Stages?
+## Logged Metrics (W&B)
 
-The three-stage training approach ensures stable convergence:
+Averaged per epoch and logged when `--use_wandb` is set:
 
-1. **Stage 1** first learns good pose predictions without worrying about uncertainty
-2. **Stage 2** learns uncertainty estimates based on fixed (frozen) pose features
-3. **Stage 3** fine-tunes everything together for optimal performance
+- **Train** (`train/…`): `loss`, `nll_loss`, `pinball_loss`, `pose_loss`, `lambda`, plus
+  `learning_rate`.
+- **Eval** (`eval/…`): `nll_loss`, `pose_loss`, `mpjpe`, `mpjpe_std`, per-horizon
+  `mpjpe_time_{80,160,240,320,400}ms`, and `uncertainty_coverage std={1,2,3,4}`.
+- **Test** (`test_eval/…`): the same eval metrics computed once on the test split at the end.
 
-### Parameter Freezing in Stage 2
+## Learning-Rate Scheduling
 
-**Critical:** In Stage 2, ALL parameters except `uncertainty_head` are frozen. This means:
+Each stage gets its **own** schedule, recreated when the stage starts (`--use_lr_schedule`):
 
-✅ **Trainable in Stage 2:**
-- `uncertainty_head.mlp_0`
-- `uncertainty_head.mlp_1`
-- `uncertainty_head.mlp_2`
-- `uncertainty_head.unc_proc_0`
-- `uncertainty_head.unc_proc_1`
-- `uncertainty_head.uncertainty_weight`
+1. **Warmup** (`--lr_warmup_epochs`, capped at half the stage): LR ramps `0 → learning_rate`.
+2. **Decay** (`cosine` or `exponential`): LR decays `learning_rate → learning_rate · lr_min_factor`
+   over the rest of the stage.
 
-❌ **Frozen in Stage 2:**
-- All transformer blocks (`transformer_block_*`)
-- Frequency decoders (`low_freq_decoder`, `high_freq_decoder`)
-- Input embeddings (`input_embed_*`)
-- Positional embeddings (`freq_pos_embed`)
-- Uncertainty embedding module (if using input uncertainty)
-
-This is implemented by zeroing out gradients for frozen parameters during the backward pass.
-
-## Loss Functions
-
-### Stage 1: Pose Only
-```python
-Loss = MAE(predicted_poses, target_poses)
-```
-**Trainable**: All parameters
-
-### Stage 2: Uncertainty Head Only
-```python
-Loss = GaussianNLL(predicted_poses, target_poses, cholesky_L) + λ * MAE(predicted_poses, target_poses)
-```
-- λ linearly decays from 1 to 0 over the first 5 epochs
-- **Trainable**: `uncertainty_head` ONLY
-- **Frozen**: Everything else
-
-### Stage 3: End-to-End
-```python
-Loss = GaussianNLL(predicted_poses, target_poses, cholesky_L) + MAE(predicted_poses, target_poses)
-```
-**Trainable**: All parameters
-
-## Learning Rate Scheduling
-
-**Important:** Each stage gets its own independent learning rate schedule!
-
-- **Stage 1**: LR schedule over 50 epochs (default)
-- **Stage 2**: New LR schedule over 20 epochs (default)
-- **Stage 3**: New LR schedule over 30 epochs (default)
-
-This means:
-- Each stage starts with a fresh warmup period
-- Each stage decays from the initial LR to the minimum LR
-- The optimizer is recreated between stages with a new schedule
-
-### Default Behavior (Cosine Annealing)
-For each stage with N epochs:
-1. **Warmup (epochs 0-5)**: LR increases from 0 → initial_lr
-2. **Decay (epochs 5-N)**: LR decreases from initial_lr → (initial_lr × 0.01)
-
-### Example
-With `--learning_rate 1e-3`:
-- **Stage 1** (50 epochs):
-  - Epochs 0-5: Warmup 0 → 1e-3
-  - Epochs 5-50: Cosine decay 1e-3 → 1e-5
-- **Stage 2** (20 epochs):
-  - Epochs 0-5: Warmup 0 → 1e-3 (fresh start!)
-  - Epochs 5-20: Cosine decay 1e-3 → 1e-5
-- **Stage 3** (30 epochs):
-  - Epochs 0-5: Warmup 0 → 1e-3 (fresh start!)
-  - Epochs 5-30: Cosine decay 1e-3 → 1e-5
-
-## Example Workflows
-
-### Workflow 1: Complete Training from Scratch
-```bash
-# Stage 1: Train pose prediction
-python train_motion_prediction_model.py --stage 1 --data_path datasets/
-
-# Stage 2: Train uncertainty head
-python train_motion_prediction_model.py --stage 2 --resume --data_path datasets/
-
-# Stage 3: End-to-end finetuning
-python train_motion_prediction_model.py --stage 3 --resume --data_path datasets/
-```
-
-### Workflow 2: All-in-One Training
-```bash
-# Train all stages in one command
-python train_motion_prediction_model.py --stage 1 --data_path datasets/
-```
-
-### Workflow 3: Quick Local Test
-```bash
-# Fast test run without W&B
-python train_motion_prediction_model.py \
-    --run_id test_run \
-    --stage1_epochs 2 \
-    --stage2_epochs 2 \
-    --stage3_epochs 2 \
-    --batch_size 64 \
-    --no_wandb \
-    --data_path datasets/
-```
+So every stage starts a fresh warmup and decays independently — the optimizer is rebuilt between
+stages.
 
 ## Troubleshooting
 
-### Issue: "No checkpoints found"
-**Solution**: Make sure you're using the correct `--run_id` when resuming, or don't specify it to use the wandb run id.
-
-### Issue: CUDA out of memory
-**Solution**: Reduce batch size: `--batch_size 128` or `--batch_size 64`
-
-### Issue: wandb login required
-**Solution**: Run `wandb login` or use `--no_wandb` flag
-
-### Issue: Config file already exists
-**Solution**: Use `--new_config` flag to override existing configuration
+- **"No checkpoints found" on resume** — pass the correct `--run_id`, or omit it to use the W&B id.
+- **CUDA out of memory** — lower `--batch_size` (e.g. `128` or `64`); on a shared GPU also set
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+- **W&B login required** — run `wandb login`, or pass `--no_wandb`.
+- **Config not updating** — an existing run config is reloaded on resume; pass `--new_config` to
+  rebuild it from the command line.
 
 ## References
 
-- Model architecture: `src/models/dct_pose_transformer.py`
-- Loss functions: `src/models/dct_pose_transformer.py:pose_prediction_loss`, `gaussian_nll_from_cholesky`
-- Dataset: Human3.6M motion prediction dataset
-- Evaluation metrics: `human_pose_pipeline/utils/eval_utils.py:evaluate_pose_prediction_scores_jax`
+- Model + losses: [`models/dct_pose_transformer_pytorch_attn.py`](../models/dct_pose_transformer_pytorch_attn.py)
+  (`DCTPoseTransformer`, `pose_prediction_loss`, `gaussian_nll_from_cholesky`,
+  `set_radius_pinball_loss`)
+- RLE variant: [`models/dct_pose_transformer_rle.py`](../models/dct_pose_transformer_rle.py)
+- Dataset dispatch: [`datasets/wrapper.py`](../datasets/wrapper.py) (`dataloader_from_string`)
+- Eval metrics: [`utils/eval_utils.py`](../utils/eval_utils.py)
+  (`evaluate_pose_prediction_scores_jax`, `evaluate_uncertainty_coverage_jax`)
+- Build deployable models: [`scripts/build_motion_models.py`](../../../scripts/build_motion_models.py)
+- Settings (joints/horizons/reduced indices): [`h36m_settings.py`](h36m_settings.py)

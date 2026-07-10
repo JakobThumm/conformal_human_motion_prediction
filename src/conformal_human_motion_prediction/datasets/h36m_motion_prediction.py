@@ -47,6 +47,7 @@ class Human36mMotionDataset3D(Dataset):
         seed=None,
         augment=False,
         scale_range=(0.8, 1.2),
+        max_target_speed=V_HUMAN_ISO,
     ):
         self.input_frames = input_frames
         self.predict_frames = predict_frames
@@ -68,9 +69,12 @@ class Human36mMotionDataset3D(Dataset):
             )
         # Drop windows with implausibly fast motion across the mocap prediction horizon, INCLUDING
         # the last-mocap-input -> first-mocap-prediction transition.
-        # We only include data, where the human moves slower than the ISO limit v <= 2.0 m/s.
-        # To disable, increase the V_HUMAN_ISO value in the config.
-        self._filter_fast_target_motion(input_is_mocap=not input_uncertainty)
+        # We only include data, where the human moves slower than ``max_target_speed`` (m/s;
+        # defaults to the ISO limit V_HUMAN_ISO = 2.0 m/s). Pass a larger value to keep faster
+        # motions, or a non-positive / infinite value to disable the filter entirely.
+        self._filter_fast_target_motion(
+            input_is_mocap=not input_uncertainty, threshold=max_target_speed
+        )
         self.reduce_size = reduce_size
         self.reduced_timestep = reduced_timestep
         self.reduced_joints = reduced_joints
@@ -201,6 +205,10 @@ class Human36mMotionDataset3D(Dataset):
         """
         n_before = len(self.pose_data)
         if n_before == 0:
+            return
+        if threshold is None or threshold <= 0 or not np.isfinite(threshold):
+            print(f"Too-fast target filter: disabled (threshold={threshold}), kept all {n_before} sequences")
+            self._gt_last_input = None
             return
         poses = np.asarray(self.pose_data)                       # [N, seq, J*3]
         if input_is_mocap:
@@ -371,6 +379,7 @@ def get_h36m_motion_dataset_function(
     directory_uncertain: Optional[str] = None,
     augment: bool = False,
     scale_range: tuple = (0.8, 1.2),
+    max_target_speed: float = V_HUMAN_ISO,
 ):
     """
     Get data loaders for preprocessed H36M dataset
@@ -404,6 +413,7 @@ def get_h36m_motion_dataset_function(
         seed=seed,
         augment=augment,
         scale_range=scale_range,
+        max_target_speed=max_target_speed,
     )
 
     validation_dataset = Human36mMotionDataset3D(
@@ -414,7 +424,8 @@ def get_h36m_motion_dataset_function(
         reduce_size=reduce_size,
         ood=ood,
         directory_uncertain=directory_uncertain,
-        seed=seed
+        seed=seed,
+        max_target_speed=max_target_speed,
     )
 
     test_dataset = Human36mMotionDataset3D(
@@ -425,7 +436,8 @@ def get_h36m_motion_dataset_function(
         reduce_size=reduce_size,
         ood=ood,
         directory_uncertain=directory_uncertain,
-        seed=seed
+        seed=seed,
+        max_target_speed=max_target_speed,
     )
 
     # Subsample if n_samples is specified
@@ -474,6 +486,7 @@ def get_h36m_motion_dataset(
     n_samples=None,
     augment=False,
     scale_range=(0.8, 1.2),
+    max_target_speed=V_HUMAN_ISO,
 ):
     """
     Get data loaders for preprocessed H36M dataset
@@ -488,6 +501,7 @@ def get_h36m_motion_dataset(
         n_samples: Number of samples to use from dataset (None = use all)
         augment: Whether to apply Z-rotation and scale augmentation to the train split
         scale_range: (min, max) scale factor range for augmentation
+        max_target_speed: Too-fast filter threshold in m/s (<=0/inf disables it)
 
     Returns:
         tuple: (train_loader, valid_loader, test_loader)
@@ -500,6 +514,7 @@ def get_h36m_motion_dataset(
         n_samples=n_samples,
         augment=augment,
         scale_range=scale_range,
+        max_target_speed=max_target_speed,
     )
 
 
@@ -513,6 +528,7 @@ def get_h36m_motion_dataset_with_uncertainty(
     n_samples=None,
     augment=False,
     scale_range=(0.8, 1.2),
+    max_target_speed=V_HUMAN_ISO,
 ):
     """
     Get data loaders for preprocessed H36M dataset
@@ -528,6 +544,7 @@ def get_h36m_motion_dataset_with_uncertainty(
         n_samples: Number of samples to use from dataset (None = use all)
         augment: Whether to apply Z-rotation and scale augmentation to the train split
         scale_range: (min, max) scale factor range for augmentation
+        max_target_speed: Too-fast filter threshold in m/s (<=0/inf disables it)
 
     Returns:
         tuple: (train_loader, valid_loader, test_loader)
@@ -542,6 +559,7 @@ def get_h36m_motion_dataset_with_uncertainty(
         directory_uncertain=directory_uncertain,
         augment=augment,
         scale_range=scale_range,
+        max_target_speed=max_target_speed,
     )
 
 
