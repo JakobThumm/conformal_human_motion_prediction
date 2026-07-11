@@ -74,7 +74,7 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false python -m \
     --lr_warmup_epochs 5 --lr_min_factor 0.1 \
     --weight_decay 0.000001 --max_grad_norm 0.6796845430167515 \
     --augment --max_target_speed 0 --seed 420 \
-    --lambda_pinball 1.0 --set_likelihood 0.9999 \
+    --lambda_pinball 1.0 --set_likelihood 0.995 \
     --tail_reweight_gamma 1.0 --tail_reweight_max 5.0 \
     --wandb_project motion-prediction --use_wandb
 ```

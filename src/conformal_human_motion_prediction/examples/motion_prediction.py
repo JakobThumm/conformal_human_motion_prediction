@@ -85,6 +85,13 @@ def main():
         help="Dataset name to\
         validate on. Choose from: Human36mMotionDataset3D and Human36mMotionDataset3DWithInputUncertainty (Default).",
     )
+    parser.add_argument(
+        "--max_target_speed",
+        type=float,
+        default=2.0,
+        help="Too-fast target filter threshold in m/s (default 2.0 = ISO V_HUMAN_ISO). "
+        "Raise it to keep faster motions; set <=0 or inf to disable the filter.",
+    )
 
     args = parser.parse_args()
 
@@ -123,6 +130,7 @@ def main():
         seed=420,
         download=False,
         data_path=data_path,
+        max_target_speed=args.max_target_speed,
     )
     if args.split == "train":
         data_loader = train_loader

@@ -8,6 +8,7 @@ python -m conformal_human_motion_prediction.examples.motion_prediction \
   --data_path datasets/ \
   --dataset_name Human36mMotionDataset3D \
   --split test \
+  --max_target_speed 0 \
   --model_save_path models/motion_prediction/final_training_run/checkpoints/stage_1/dct_pose_transformer.pickle \
   --output_dir results/final/motion_prediction/stage_1_no_uncertainty_no_ood
 
@@ -16,6 +17,7 @@ python -m conformal_human_motion_prediction.examples.motion_prediction \
   --data_path datasets/ \
   --dataset_name Human36mMotionDataset3D \
   --split test \
+  --max_target_speed 0 \
   --model_save_path models/motion_prediction/final_model/dct_pose_transformer.pickle \
   --output_dir results/final/motion_prediction/no_uncertainty_no_ood
 

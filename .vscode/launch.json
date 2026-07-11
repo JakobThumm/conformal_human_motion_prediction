@@ -642,7 +642,7 @@
           "--seed", "420",
           // set-radius pinball/quantile loss toward the target coverage tau (stages 2/3/4).
           "--lambda_pinball", "1.0",
-          "--set_likelihood", "0.9999",
+          "--set_likelihood", "0.995",
           // reweight the loss on high input-uncertainty joints in stage 4.
           "--tail_reweight_gamma", "1.0",
           "--tail_reweight_max", "5.0",
