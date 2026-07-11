@@ -4,9 +4,9 @@
 set -e
 
 POSE_MODEL="models/pose_estimation/jax_resnet50_regressflow"
-POSE_SCORE_FN="models/ood_functions/pose_score_fn.cloudpickle"
+POSE_SCORE_FN="models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle"
 MOTION_MODEL="models/motion_prediction/final_model/dct_pose_transformer.pickle"
-MOTION_SCORE_FN="models/ood_functions/motion_score_fn.cloudpickle"
+MOTION_SCORE_FN="models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"
 
 for N in 3 5 10 50; do
     python -m conformal_human_motion_prediction.examples.eval_full_pipeline \
