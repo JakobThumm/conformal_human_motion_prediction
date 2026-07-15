@@ -302,7 +302,7 @@
       "program": "src/conformal_human_motion_prediction/examples/pose_estimation_2d_with_ood.py",
       "console": "integratedTerminal",
       "args": [
-          "--score_fn_path", "models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle",
+          "--score_fn_path", "models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle",
           "--data_path", "datasets/",
           "--model_path", "models/pose_estimation/jax_resnet50_regressflow",
           "--max_samples", "10000",
@@ -317,7 +317,7 @@
       "program": "src/conformal_human_motion_prediction/examples/pose_estimation_3D.py",
       "console": "integratedTerminal",
       "args": [
-          "--score_fn_path", "models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle",
+          "--score_fn_path", "models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle",
           "--data_path", "datasets/",
           "--model_path", "models/pose_estimation/jax_resnet50_regressflow",
           "--ood_threshold", "0.05",
@@ -369,9 +369,9 @@
       "console": "integratedTerminal",
       "args": [
         "--pose_model_path", "models/pose_estimation/jax_resnet50_regressflow",
-        "--pose_score_fn_path", "models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle",
+        "--pose_score_fn_path", "models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle",
         "--motion_model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
-        "--motion_score_fn_path", "models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle",
+        "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle",
         "--split", "validation",
         // "--action", "Directions",
         "--max_sequences", "2",
@@ -388,7 +388,7 @@
       "args": [
         "--motion_model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
         "--enable_ood",
-        "--motion_score_fn_path", "models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM720of800_sketch_srft_seed0_size10000.cloudpickle",
+        "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle",
         "--enable_tracking",
         "--depth_uncertainty", "0.05",
         "--start_at", "1656",
@@ -610,7 +610,7 @@
       "console": "integratedTerminal",
       "args": [
           "--data_path", "datasets/",
-          "--model_save_path", "models/motion_prediction/dct_pose_transformer.pickle"
+          "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle"
       ]
     },
     {
