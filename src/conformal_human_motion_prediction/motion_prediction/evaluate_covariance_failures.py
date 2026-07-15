@@ -36,7 +36,6 @@ import matplotlib.pyplot as plt
 
 from conformal_human_motion_prediction.motion_prediction.inference_helper import (
     calibrate_covariance_matrices, conformal_set_radius, load_conformal_calibrator,
-    DEFAULT_CONFORMAL_CALIBRATOR,
 )
 from conformal_human_motion_prediction.utils.eval_utils import convert_covariance_matrices_to_set
 from conformal_human_motion_prediction.pose_estimation.h36m_settings import JOINT_NAMES_13
@@ -65,7 +64,8 @@ def main():
     parser.add_argument("--calibrate", action=argparse.BooleanOptionalAction, default=True,
                         help="Apply the affine covariance calibration before forming the set "
                              "(fallback when --conformal_calibrator is unset/missing).")
-    parser.add_argument("--conformal_calibrator", type=str, default=DEFAULT_CONFORMAL_CALIBRATOR,
+    parser.add_argument("--conformal_calibrator", type=str,
+                        default="models/motion_prediction/conformal_calibration/conformal_calibrator.npz",
                         help="Path to a conditional-conformal calibrator .npz. When present, the set "
                              "is formed with it (replacing the affine calibration) -- so this script "
                              "doubles as a check that the deployed conformal set covers uniformly. "

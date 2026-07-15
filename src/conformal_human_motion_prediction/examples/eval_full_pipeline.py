@@ -17,24 +17,9 @@ import cloudpickle
 import jax.numpy as jnp
 
 from conformal_human_motion_prediction.motion_prediction.inference_helper import (
-    run_motion_prediction, load_conformal_calibrator, DEFAULT_CONFORMAL_CALIBRATOR,
+    run_motion_prediction, load_conformal_calibrator,
 )
 
-# Conditional-conformal calibrator for the motion set radius (replaces affine calibration); loaded
-# once, falls back to affine when the file is absent.
-_MOTION_CALIBRATOR = "UNSET"
-
-
-def _get_motion_calibrator():
-    global _MOTION_CALIBRATOR
-    if _MOTION_CALIBRATOR == "UNSET":
-        _MOTION_CALIBRATOR = (load_conformal_calibrator(DEFAULT_CONFORMAL_CALIBRATOR)
-                              if os.path.exists(DEFAULT_CONFORMAL_CALIBRATOR) else None)
-        if _MOTION_CALIBRATOR is not None:
-            print(f"[motion] conditional-conformal calibrator loaded (target {_MOTION_CALIBRATOR['level']:.4f})")
-        else:
-            print("[motion] no conformal calibrator found -> affine calibration")
-    return _MOTION_CALIBRATOR
 from conformal_human_motion_prediction.utils.visualization import plot_ood_score_histogram
 from conformal_human_motion_prediction.utils.eval_utils import (
     compute_sara_predictions,
@@ -100,6 +85,7 @@ def main():
     parser.add_argument('--pose_score_fn_path', type=str, default='models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle', help='Direct path to the pose OOD score functions (.cloudpickle)')
     parser.add_argument('--motion_model_save_path', type=str, default='models/motion_prediction/final_model/dct_pose_transformer.pickle', help='Path to saved motion model')
     parser.add_argument('--motion_score_fn_path', type=str, default='models/motion_prediction/final_model_for_ood/dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM1440of1600_sketch_srft_seed0_size20000.cloudpickle', help="Path to the OOD score function for the motion prediction.")
+    parser.add_argument('--conformal_calibrator', type=str, default='models/motion_prediction/conformal_calibration/conformal_calibrator.npz', help="Path to the conditional-conformal calibrator .npz. Falls back to affine calibration if the file is absent.")
     parser.add_argument('--subsample', type=int, default=2, help='Subsampling of frames to match training camera frequency. 1 = no subsampling.')
     parser.add_argument('--split', type=str, default='validation', help='train, validation, or test')
     parser.add_argument('--action', type=str, default=None, help='Action to evaluate. Evaluate all actions if None.')
@@ -115,6 +101,14 @@ def main():
     print("=" * 60)
     print("Full Pipeline - JAX Implementation")
     print("=" * 60)
+
+    # Conditional-conformal calibrator for the motion set radius (replaces affine calibration);
+    # falls back to affine calibration when the file is absent.
+    motion_calibrator = load_conformal_calibrator(os.path.join(root_dir, args.conformal_calibrator))
+    if motion_calibrator is not None:
+        print(f"[motion] conditional-conformal calibrator loaded (target {motion_calibrator['level']:.4f})")
+    else:
+        print("[motion] no conformal calibrator found -> affine calibration")
 
     # Configuration
     base_directory = os.path.join(root_dir, args.data_path, "H36M", "extracted")
@@ -310,7 +304,7 @@ def main():
                         calibration_factors=COV_CALIBRATION_FACTORS,
                         n_correct_poses_required=args.n_correct_poses_required,
                         set_likelihood=SET_LIKELIHOOD,
-                        conformal_calibrator=_get_motion_calibrator(),
+                        conformal_calibrator=motion_calibrator,
                     )
                 motions_cov_predicted_uncalibrated.append(motion_cov_uncalibrated)
                 # Store motion predictions (raw model output, not the buffer)

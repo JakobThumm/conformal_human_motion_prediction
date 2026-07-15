@@ -12,6 +12,7 @@ on-disk layout the pipeline expects, then derives the deployable motion models:
         final_training_run/                         # per-stage Orbax checkpoints + exports
         final_model/                                # built from final stage (full model)
         final_model_for_ood/                        # built from final stage (reduced output)
+        conformal_calibration/                      # fitted conformal_calibrator.npz
       ood_functions/                                # cached sketched-Lanczos OOD score fns
         {jax_resnet18_regressflow_3joints,dct_pose_transformer}_score_fn.cloudpickle
 
@@ -44,7 +45,8 @@ REPO_TYPE = "model"
 # Logical group -> glob patterns (relative to the repo root) to fetch for that group.
 DOWNLOAD_GROUPS: dict[str, list[str]] = {
     "pose_estimation": ["pose_estimation/**"],
-    "motion_prediction": ["motion_prediction/**"],
+    "motion_prediction": ["motion_prediction/final_training_run/**"],
+    "conformal_calibration": ["motion_prediction/conformal_calibration/**"],
     "ood_functions": ["ood_functions/**"],
 }
 

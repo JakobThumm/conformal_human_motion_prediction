@@ -1,4 +1,5 @@
 """Helper functions for motion prediction inference."""
+import os
 from typing import Optional, Sequence, Tuple, Union
 from sympy import ShapeError
 from tqdm import tqdm
@@ -175,8 +176,10 @@ def run_motion_prediction(
         - Updated motion_uncertainty_buffer [P, J, 3, 3]
         - motion_set_radius [P, J]
         - motion_ood_score: float
-        - motion_is_ood: bool
-        - valid_motion: bool
+        - motion_is_ood: bool: indicates if the OOD monitor detected an OOD input
+        - valid_motion: bool: Indicator if the motion is valid or not. Valid if
+            - motion is not ood and
+            - the last N pose inputs are valid (not OOD, from true camera input)
         - motion_predicted [P, J, 3]: Raw model position prediction (before buffer update)
         - motion_cov_calibrated [P, J, 3, 3]: Calibrated covariance (before buffer update)
         - motion_cov_uncalibrated [P, J, 3, 3]: Raw model covariance before calibration
@@ -427,18 +430,17 @@ def calibrate_covariance_matrices(
     return covariance_matrices
 
 
-# --------------------------------------------------------------------------- conditional conformal
-# Conditional (Mondrian/CQR) conformal calibration of the set radius, conditioned on
-# (joint x horizon-frame x input-uncertainty bin). Fitted offline by
-# ``motion_prediction.conformal_calibration`` and saved as an .npz; applied here as a drop-in
-# replacement for the affine ``calibrate_covariance_matrices`` + ``convert_..._to_set`` pair.
-# See that module for the rationale (the affine calibration cannot fix the input-uncertainty- and
-# joint-conditional under-coverage). Default location written by the fitter:
-DEFAULT_CONFORMAL_CALIBRATOR = "results/motion_prediction/conformal_calibration/conformal_calibrator.npz"
-
-
 def load_conformal_calibrator(path):
-    """Load a saved conditional-conformal calibrator .npz into the dict the apply fns expect."""
+    """Load a saved conditional-conformal calibrator .npz, or None if the file is absent.
+
+    The calibrator applies conditional (Mondrian/CQR) conformal calibration of the set radius,
+    conditioned on (joint x horizon-frame x input-uncertainty bin). It is fitted offline by
+    ``motion_prediction.conformal_calibration`` and applied here as a drop-in replacement for the
+    affine ``calibrate_covariance_matrices`` + ``convert_..._to_set`` pair (see that module for the
+    rationale). Returning None when the path is missing lets callers fall back to affine calibration.
+    """
+    if path is None or not os.path.exists(path):
+        return None
     d = np.load(path)
     return dict(bin_edges=np.asarray(d["bin_edges"], dtype=np.float64),
                 q_grid=np.asarray(d["q_grid"], dtype=np.float64),

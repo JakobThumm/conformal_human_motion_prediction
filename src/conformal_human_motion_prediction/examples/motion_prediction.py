@@ -13,7 +13,6 @@ from tqdm import tqdm
 from conformal_human_motion_prediction.pose_estimation.inference_helper import initialize_jax_models
 from conformal_human_motion_prediction.motion_prediction.inference_helper import (
     calibrate_covariance_matrices, predict_poses, conformal_set_radius, load_conformal_calibrator,
-    DEFAULT_CONFORMAL_CALIBRATOR,
 )
 from conformal_human_motion_prediction.utils.eval_utils import (
     compute_sara_predictions,
@@ -91,6 +90,13 @@ def main():
         default=2.0,
         help="Too-fast target filter threshold in m/s (default 2.0 = ISO V_HUMAN_ISO). "
         "Raise it to keep faster motions; set <=0 or inf to disable the filter.",
+    )
+    parser.add_argument(
+        "--conformal_calibrator",
+        type=str,
+        default="models/motion_prediction/conformal_calibration/conformal_calibrator.npz",
+        help="Path to the conditional-conformal calibrator .npz. Falls back to affine "
+        "calibration if the file is absent.",
     )
 
     args = parser.parse_args()
@@ -203,10 +209,12 @@ def main():
                          if _li_full.shape[-1] >= N_JOINTS * 3 + N_JOINTS * 9 else None)
     last_input_poses = _li_full[..., :N_JOINTS * 3].reshape(-1, N_JOINTS, 3)
     conformal_calibrator = None
-    if os.path.exists(DEFAULT_CONFORMAL_CALIBRATOR) and input_covariances is not None:
-        conformal_calibrator = load_conformal_calibrator(DEFAULT_CONFORMAL_CALIBRATOR)
-        print(f"Using conditional-conformal calibrator {DEFAULT_CONFORMAL_CALIBRATOR} "
-              f"(target {conformal_calibrator['level']:.4f}) for the conformal prediction sets.")
+    if input_covariances is not None:
+        cc_path = os.path.join(root_dir, args.conformal_calibrator)
+        conformal_calibrator = load_conformal_calibrator(cc_path)
+        if conformal_calibrator is not None:
+            print(f"Using conditional-conformal calibrator {cc_path} "
+                  f"(target {conformal_calibrator['level']:.4f}) for the conformal prediction sets.")
     # Increase covariance for certain times and joints
     covariance_matrices_calibrated = calibrate_covariance_matrices(
         covariance_matrices=covariance_matrices,

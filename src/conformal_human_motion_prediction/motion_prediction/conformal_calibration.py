@@ -222,7 +222,11 @@ def main():
                          "(self-calibrated) radius -- the right comparison for P2-trained models; "
                          "'affine' = the legacy affine-calibrated radius. Use 'raw' for cov_p2p4 "
                          "(affine would double-calibrate a model that already predicts the radius).")
-    ap.add_argument("--output_dir", type=str, default="results/motion_prediction/conformal_calibration")
+    ap.add_argument("--output_dir", type=str, default="results/motion_prediction/conformal_calibration",
+                    help="Directory for the diagnostic figure.")
+    ap.add_argument("--calibrator_path", type=str,
+                    default="models/motion_prediction/conformal_calibration/conformal_calibrator.npz",
+                    help="Path to write the deployable calibrator .npz (the file the pipeline loads).")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -377,7 +381,8 @@ def main():
     print(f"\nSaved figure to {fig_path}")
 
     # ----- persist the deployable calibrator ---------------------------------------------------
-    cal_path = os.path.join(out_dir, "conformal_calibrator.npz")
+    cal_path = os.path.join(root_dir, args.calibrator_path)
+    Path(cal_path).parent.mkdir(parents=True, exist_ok=True)
     np.savez(cal_path, bin_edges=calib["bin_edges"], q_grid=calib["q_grid"], n_grid=calib["n_grid"],
              level=level, J=J, T=T, B=B, base=args.base)
     print(f"Saved calibrator to {cal_path}  (apply: r_cal = max(r_model + q_grid[j,t,bin(input_unc)], 0))")

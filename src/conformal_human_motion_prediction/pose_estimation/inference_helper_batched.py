@@ -1111,7 +1111,10 @@ def update_motion_prediction_buffer(
     Returns:
         - Updated motion_prediction_buffer
         - Updated motion_uncertainty_buffer
-        - Indicator if the predicted motion was used (True) or the motion prediction was rotated (False).
+        - Indicator if the motion is valid or not. Valid if
+            - motion is not ood and
+            - the last N pose inputs are valid
+          If valid, the predicted motion is used (True) otherwise the motion prediction is rotated (False).
     """
     if not is_ood and jnp.all(pose_valid_buffer[-n_correct_poses_required:] == 1):
         # Use predicted motion
@@ -1122,8 +1125,7 @@ def update_motion_prediction_buffer(
         motion_uncertainty_buffer = jnp.roll(motion_uncertainty_buffer, shift=-1, axis=0)
         motion_prediction_buffer = motion_prediction_buffer.at[-1].set(jnp.zeros_like(motion_prediction_buffer[-1]))
         motion_uncertainty_buffer = motion_uncertainty_buffer.at[-1].set(jnp.zeros_like(motion_uncertainty_buffer[-1]))
-
-    return motion_prediction_buffer, motion_uncertainty_buffer, False
+        return motion_prediction_buffer, motion_uncertainty_buffer, False
 
 
 def reset_yolo_tracking(yolo_pose_model):
