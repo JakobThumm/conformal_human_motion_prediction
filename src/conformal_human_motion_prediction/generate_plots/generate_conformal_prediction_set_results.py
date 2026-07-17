@@ -39,7 +39,7 @@ def generate_table(sara_coverage, sara_volume, conformal_coverage, conformal_vol
     lines.append(r"        \textbf{Method} & $\uparrow$ Coverage (\%) & $\downarrow$ Volume ($m^3$) \\")
     lines.append(r"        \midrule")
     lines.append(
-        f"        SARA~\\cite{{schepp_2022_SaRATool}} & "
+        f"        ISO 13855:2010~\\cite{{iso_2010_SafetyMachinery}} & "
         f"{bold(sara_coverage, '.2f', sara_coverage_bold)} & "
         f"{bold(sara_volume, '.3f', sara_volume_bold)} \\\\"
     )

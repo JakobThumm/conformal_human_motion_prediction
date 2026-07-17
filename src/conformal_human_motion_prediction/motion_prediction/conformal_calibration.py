@@ -308,7 +308,7 @@ def main():
     print(f"{'method':>26} {'coverage':>10} {'mean vol (m^3)':>15} {'mean radius (m)':>16}")
     print(f"{base_label:>26} {100 * cov_base:>9.3f}% {vol_base:>15.5f} {rbase_t.mean()/1000:>16.4f}")
     print(f"{'conditional conformal':>26} {100 * cov_con:>9.3f}% {vol_con:>15.5f} {r_conf_t.mean()/1000:>16.4f}")
-    print(f"{'SARA shield':>26} {100 * cov_sara:>9.3f}% {vol_sara:>15.5f} {rsara_t.mean()/1000:>16.4f}")
+    print(f"{'ISO 13855:2010~\\cite{{iso_2010_SafetyMachinery}}':>26} {100 * cov_sara:>9.3f}% {vol_sara:>15.5f} {rsara_t.mean()/1000:>16.4f}")
 
     # coverage by input-uncertainty bin (the M1 test)
     edges = calib["bin_edges"]

@@ -2716,19 +2716,20 @@ Settings:
   ]
 },
 ```
+# Safety Shield Simulation Results
 
 ==================== Shield simulation results ====================
 Random robot poses     : 4000000
 Monitored trajectories : 95
-Eligible human samples : 49139
-Total (pose, traj, human) trials : 18,672,820,000,000
+Eligible human samples : 57230
+Total (pose, traj, human) trials : 21,747,400,000,000
 Intervals without ground-truth robot state (past log end): 12,000,000
-Poses fully culled at level 1: 3367709/4000000
+Poses fully culled at level 1: 3320408/4000000
 Level-5 survivors (detailed-checked): predicted 0.000%, true 0.000% of trials (rest culled by the hierarchy)
 -------------------------------------------------------------------
-Verified (shield says safe) : 18,520,128,924,382  (99.182% of trials)
-True contact                : 57,078,683,021  (0.306% of trials)
-True unsafe contact         : 23,627,754,162  (0.127% of trials)
+Verified (shield says safe) : 21,578,845,943,917  (99.225% of trials)
+True contact                : 67,318,469,189  (0.310% of trials)
+True unsafe contact         : 28,097,133,465  (0.129% of trials)
 -------------------------------------------------------------------
 >>> Verified BUT contact        : 1  (0.0000% of verified, 0.0000% of trials)
 >>> Verified BUT unsafe contact : 1  (0.0000% of verified, 0.0000% of trials)
@@ -2736,13 +2737,29 @@ True unsafe contact         : 23,627,754,162  (0.127% of trials)
 
 ============== PFH_D (dangerous failure rate) per ISO 13849-1 ==============
 Dangerous failure = verified BUT unsafe contact (speed > V_ROBOT_ISO = 0.25 m/s)
-Test cycles N = 18,672,820,000,000   dangerous failures k = 1   t_cycle = 0.004 s
+Test cycles N = 21,747,400,000,000   dangerous failures k = 1   t_cycle = 0.004 s
 confidence |  PFC_D upper (1/cyc) |  PFH_D upper (1/h) | PL
 ------------------------------------------------------------------------
-    0.9900 |            3.555e-13 |          3.200e-07 | d
-    0.9990 |            4.945e-13 |          4.450e-07 | d
-    0.9999 |            6.296e-13 |          5.666e-07 | d
+    0.9900 |            3.052e-13 |          2.747e-07 | d
+    0.9990 |            4.246e-13 |          3.821e-07 | d
+    0.9999 |            5.406e-13 |          4.865e-07 | d
 ============================================================================
+
+Appended run summary to /home/thumm/code/conformal_human_motion_prediction/results/final/robot_shield/shield_results.csv
+Saved table to results/final/robot_shield/robot_shield_safety.tex
+
+\begin{table}[h]
+    \centering
+    \caption{Robot-shield safety evaluation on H36M. Each row is one conformal prediction-set likelihood; a \emph{dangerous failure} is a trajectory the shield verifies as safe while the ground truth has an unsafe contact ($v_\mathrm{robot} > V_\mathrm{ISO}$). PFH$_D$ is the one-sided Clopper-Pearson upper bound at confidence $99.99\%$ over $N = 21,747,400,000,000$ test cycles ($t_\mathrm{cycle} = 0.004$ s).}
+    \label{tab:robot_shield_safety}
+    \begin{tabular}{lccccc}
+        \toprule
+        Set likelihood & $\uparrow$ Verified (\%) & Unsafe contact (\%) & $\downarrow$ Dangerous failures & $\downarrow$ PFH$_D$ (1/h) & PL \\
+        \midrule
+        \textbf{99.99\%} & 99.22 & 0.129 & \textbf{1} & \textbf{$4.87 \times 10^{-7}$} & \textbf{PL d} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
 # New Pipeline Results
 ================================
@@ -3200,3 +3217,4 @@ Saved table to /home/thumm/code/conformal_human_motion_prediction/src/conformal_
 Saved sentence to /home/thumm/code/conformal_human_motion_prediction/src/conformal_human_motion_prediction/generate_plots/../../../results/final/full_pipeline/full_pipeline_sentence.tex
 
 Our results in~\cref{tab:full_pipeline_results} show that our OOD pipeline reduces the rate of invalid pose buffers $\sum_{i=K_I - N_{\text{req}}+1}^{K_I} v_i < N_{\text{req}}$ by \SI{6.2}{\percent} while only increasing the average MPJPE by \SI{0.7}{\percent}.
+
