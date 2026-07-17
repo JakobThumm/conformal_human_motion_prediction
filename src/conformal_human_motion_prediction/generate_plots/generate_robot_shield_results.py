@@ -1,108 +1,72 @@
-"""Turn the robot-shield results CSV (from ``examples.simulate_robot_shield --results_csv``) into a
-LaTeX results table.
+"""Standalone robot-shield safety table for the three methods.
 
-Each CSV row is one shield run (typically one conformal *set likelihood*). The table reports, per
-run, how often the shield verifies a trajectory as safe, the ground-truth (unsafe-)contact rates,
-the number of *dangerous failures* (verified-but-unsafe-contact), and the resulting ISO 13849-1
-PFH_D upper bound + achievable Performance Level at a chosen Clopper-Pearson confidence.
+Each CSV row (from ``examples.simulate_robot_shield --results_csv``) is one shield run; the run's
+method is derived from (human_set, mask_ood):
+  * human_set=sara                     -> ISO 13855 without OOD filtered
+  * human_set=conformal, mask_ood=off  -> Ours without OOD filtered
+  * human_set=conformal, mask_ood=on   -> Ours with OOD filtered
+
+The table reports, per method, how often the shield verified the monitored trajectory as safe
+(c_safe), the number of contacts despite a verified trajectory (c_safe & contact), and the ISO
+13849-1 PFH_D upper bound + achievable Performance Level at a chosen Clopper-Pearson confidence.
 
 Usage::
 
     python -m conformal_human_motion_prediction.generate_plots.generate_robot_shield_results \
-        --csv results/motion_prediction/shield_results.csv \
-        --output results/final/robot_shield/robot_shield_safety.tex
+        --csv results/final/robot_shield/shield_results.csv \
+        --output results/final/robot_shield/robot_shield_safety.tex --confidence 0.9999
 """
 import argparse
-import csv
 import os
 
-
-def _read_rows(csv_path):
-    with open(csv_path, newline="") as f:
-        rows = list(csv.DictReader(f))
-    if not rows:
-        raise SystemExit(f"No rows in {csv_path}")
-    return rows
-
-
-def _fmt_sci(x):
-    """Format a float as LaTeX scientific notation, e.g. 2.21e-06 -> '2.21 \\times 10^{-6}'."""
-    x = float(x)
-    if x <= 0:
-        return "0"
-    exp = 0
-    mant = x
-    while mant >= 10.0:
-        mant /= 10.0; exp += 1
-    while mant < 1.0:
-        mant *= 10.0; exp -= 1
-    return f"{mant:.2f} \\times 10^{{{exp}}}"
-
-
-def _fmt_pl(pl):
-    """'c' -> 'PL c'; 'e (better than required)' -> 'PL e'; 'none (worse than PL a)' -> 'none'."""
-    tok = str(pl).strip().split()[0]
-    return "none" if tok.lower() == "none" else f"PL {tok}"
+from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
+    METHODS, METHOD_LABELS, bold, fmt_num, fmt_pl, read_shield_by_method,
+)
 
 
 def generate_shield_table(csv_path, confidence=0.9999):
-    """Build the LaTeX table string from a shield results CSV (one row per run).
+    """Build the LaTeX shield table string from a shield results CSV (one row per method)."""
+    shield = read_shield_by_method(csv_path, confidence)
+    present = [m for m in METHODS if m in shield]
+    if not present:
+        raise SystemExit(f"No recognized method rows in {csv_path}")
+    best_safe = max(present, key=lambda m: shield[m]["pct_verified"])
+    best_contact = min(present, key=lambda m: shield[m]["n_verified_contact"])
+    best_pfh = min(present, key=lambda m: shield[m]["pfh_d"])
 
-    ``confidence`` selects which Clopper-Pearson column (``pfh_d_<C>`` / ``pl_<C>``) to report; it
-    must match a confidence the simulation wrote (0.9900 / 0.9990 / 0.9999 by default).
-    """
-    rows = _read_rows(csv_path)
-    tag = f"{float(confidence):.4f}"
-    pfh_key, pl_key = f"pfh_d_{tag}", f"pl_{tag}"
-    if pfh_key not in rows[0]:
-        avail = sorted(k[len("pfh_d_"):] for k in rows[0] if k.startswith("pfh_d_"))
-        raise SystemExit(f"confidence {tag} not in CSV; available: {avail}")
-
-    rows.sort(key=lambda r: float(r["set_likelihood"]))
-    best = min(range(len(rows)), key=lambda i: float(rows[i][pfh_key]))  # lowest PFH_D = best
-
-    # Context for the caption (assumed shared across rows; taken from the best row).
-    n = int(float(rows[best]["total_pairs"]))
-    t_cycle = float(rows[best]["t_cycle"])
-
-    def cell(s, is_best):
-        return r"\textbf{" + s + "}" if is_best else s
-
+    n = shield[best_pfh]["total_pairs"]
+    t_cycle = shield[best_pfh]["t_cycle"]
     lines = [
         r"\begin{table}[h]",
         r"    \centering",
-        r"    \caption{Robot-shield safety evaluation on H36M. Each row is one conformal "
-        r"prediction-set likelihood; a \emph{dangerous failure} is a trajectory the shield verifies "
-        r"as safe while the ground truth has an unsafe contact "
-        r"($v_\mathrm{robot} > V_\mathrm{ISO}$). PFH$_D$ is the one-sided Clopper-Pearson upper "
-        f"bound at confidence ${float(confidence)*100:.2f}\\%$ over $N = {n:,}$ test cycles "
-        f"($t_\\mathrm{{cycle}} = {t_cycle:g}$ s).}}",
+        r"    \caption{Certification simulation on H36M test data over $N = \num{" + fmt_num(n, 3) + r"}$ "
+        r"simulated HRC test cycles ($t_\mathrm{cycle} = " + f"{t_cycle:g}" + r"$ s). "
+        r"PFH$_D$ is the one-sided Clopper-Pearson upper bound at confidence "
+        f"${float(confidence) * 100:.2f}\\%$.}}",
         r"    \label{tab:robot_shield_safety}",
-        r"    \begin{tabular}{lccccc}",
+        r"    \begin{tabular}{lcccc}",
         r"        \toprule",
-        r"        Set likelihood & $\uparrow$ Verified (\%) & Unsafe contact (\%) & "
-        r"$\downarrow$ Dangerous failures & $\downarrow$ PFH$_D$ (1/h) & PL \\",
+        r"        \textbf{Method} & $\uparrow$ $c_{\text{safe}}$ (\%) & "
+        r"$\downarrow$ $c_{\text{safe}} \land \text{contact}$ & "
+        r"$\downarrow$ PFH$_D$ (1/h) & PL \\",
         r"        \midrule",
     ]
-    for i, r in enumerate(rows):
-        is_best = i == best
-        sl = f"{float(r['set_likelihood']) * 100:.2f}\\%"
-        ver = f"{float(r['pct_verified']):.2f}"
-        unsafe = f"{float(r['pct_unsafe']):.3f}"
-        k = f"{int(float(r['n_verified_unsafe'])):,}"
-        pfh = f"${_fmt_sci(r[pfh_key])}$"
-        pl = _fmt_pl(r[pl_key])
-        lines.append(
-            f"        {cell(sl, is_best)} & {ver} & {unsafe} & "
-            f"{cell(k, is_best)} & {cell(pfh, is_best)} & {cell(pl, is_best)} \\\\"
-        )
+    for m in METHODS:
+        if m not in shield:
+            continue
+        s = shield[m]
+        safe_s = bold(f"{s['pct_verified']:.2f}", m == best_safe)
+        contact_s = bold(f"{s['n_verified_contact']:,}", m == best_contact)
+        pfh_s = bold(f"\\num{{{fmt_num(s['pfh_d'])}}}", m == best_pfh)
+        pl_s = bold(fmt_pl(s["pl"]), m == best_pfh)
+        lines.append(f"        {METHOD_LABELS[m]} & {safe_s} & {contact_s} & {pfh_s} & {pl_s} \\\\")
     lines += [r"        \bottomrule", r"    \end{tabular}", r"\end{table}", ""]
     return "\n".join(lines)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--csv", default="results/motion_prediction/shield_results.csv",
+    p.add_argument("--csv", default="results/final/robot_shield/shield_results.csv",
                    help="Shield results CSV written by simulate_robot_shield --results_csv.")
     p.add_argument("--output", default=None,
                    help="Output .tex path (default: alongside the CSV as <stem>.tex).")

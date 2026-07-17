@@ -83,6 +83,7 @@ from conformal_human_motion_prediction.motion_prediction.inference_helper import
     load_conformal_calibrator,
 )
 from conformal_human_motion_prediction.utils.eval_utils import (
+    compute_sara_predictions,
     convert_covariance_matrices_to_set,
     get_too_fast_human_movement,
 )
@@ -201,7 +202,7 @@ def load_robot_trajectories(csv_path, origin):
 def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
                        set_likelihood, sara_meas_unc, human_radius,
                        calibrate, cov_ct, cov_it, cov_factors, max_samples, rng,
-                       conformal_calibrator=None):
+                       conformal_calibrator=None, human_set="conformal", v_human=2.0):
     """Build per-step human occupancy spheres (centers in m, radii in m).
 
     Returns horizon_times [S], pred_centers [M,S,J,3], pred_r [M,S,J],
@@ -239,12 +240,28 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     )
     M = idx.size
 
-    # Predicted-horizon set radius (mm -> m). Prefer the conditional-conformal calibrator (replaces
-    # the affine calibration, which under-covers conditional on input uncertainty / joint); fall back
-    # to the affine calibration when no calibrator is supplied.
-    if conformal_calibrator is not None:
+    # Predicted-horizon human occupancy centers + set radius (mm -> m). Three modes:
+    #   "sara"     : ISO 13855 constant-velocity reachable set. Center stays at the last observed
+    #                pose; radius grows as (per-joint input uncertainty) + v_human * horizon_time.
+    #   "conformal": the conditional-conformal calibrator (replaces the affine calibration, which
+    #                under-covers conditional on input uncertainty / joint). Requires a calibrator.
+    #   affine     : legacy fallback when no calibrator is supplied.
+    # The predicted-horizon centers ("pred_horizon_centers") differ per mode: SARA is stationary at
+    # the last input pose, the model modes use the predicted trajectory.
+    if human_set == "sara":
+        input_cov = human_input[:, J * 3: J * 3 + J * 3 * 3].reshape(M, J, 3, 3)  # last input frame cov
+        in_set_m = convert_covariance_matrices_to_set(input_cov, likelihood=set_likelihood) / 1000.0  # [M,J] m
+        ph_times = [(t + 1) * dt for t in range(PH)]
+        _, r_sara = compute_sara_predictions(
+            last_input_poses=last_input, prediction_horizon_times=ph_times,
+            v_human=v_human, measurement_uncertainty=in_set_m,
+        )  # [M,PH,J] mm
+        radius_pred = r_sara / 1000.0  # m
+        pred_horizon_centers = np.repeat(last_input[:, None], PH, axis=1) / 1000.0  # stationary center
+    elif conformal_calibrator is not None:
         input_cov = human_input[:, J * 3: J * 3 + J * 3 * 3].reshape(M, J, 3, 3)  # last input frame cov
         radius_pred = conformal_set_radius(cov, input_cov, conformal_calibrator) / 1000.0  # [M,PH,J]
+        pred_horizon_centers = predictions / 1000.0
     else:
         if calibrate:
             cov = calibrate_covariance_matrices(
@@ -254,6 +271,7 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
                 joint_calibration_factors=cov_factors,
             )
         radius_pred = convert_covariance_matrices_to_set(cov, likelihood=set_likelihood) / 1000.0
+        pred_horizon_centers = predictions / 1000.0
 
     # Assemble step 0 (current pose) + horizon steps, convert mm -> m.
     S = PH + 1
@@ -261,7 +279,7 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     true_centers = np.empty((M, S, J, 3))
     pred_centers[:, 0] = last_input / 1000.0
     true_centers[:, 0] = last_input / 1000.0
-    pred_centers[:, 1:] = predictions / 1000.0
+    pred_centers[:, 1:] = pred_horizon_centers
     true_centers[:, 1:] = targets / 1000.0
 
     pred_unc = np.empty((M, S, J))
@@ -628,7 +646,20 @@ def main():
                         help="Robot base offset added to all capsule points (meters).")
     parser.add_argument("--num_robot_poses", type=int, default=1,
                         help="Number of random robot base poses to evaluate (results aggregate "
-                             "over all poses). 1 = a single random placement.")
+                             "over all poses). 1 = a single random placement. Ignored when "
+                             "--n_test_cycles is set (which derives this count).")
+    parser.add_argument("--n_test_cycles", type=float, default=None,
+                        help="Target number of simulated HRC test cycles N (one (pose, traj, human) "
+                             "trial per cycle). When set, --num_robot_poses is derived as "
+                             "round(N / (n_trajectories * n_human_samples)) so every method reaches "
+                             "approximately the same N regardless of how OOD/too-fast filtering "
+                             "changes the eligible human-sample count.")
+    parser.add_argument("--human_set", type=str, default="conformal",
+                        choices=["conformal", "sara"],
+                        help="Predicted human occupancy model. 'conformal' = our conditional-conformal "
+                             "(or affine-fallback) reachable set from the motion model; 'sara' = the "
+                             "ISO 13855 constant-velocity reachable set (stationary center, radius "
+                             "= input uncertainty + V_HUMAN_ISO * horizon time).")
     parser.add_argument("--pose_radius", type=float, default=3.0,
                         help="Radius (m) of the disk in which (x, y) base positions are sampled.")
     parser.add_argument("--pose_z_offset", type=float, default=0.2,
@@ -746,15 +777,22 @@ def main():
     print(f"Loading human results from {results_file} ...")
     with open(results_file, "rb") as f:
         results = cloudpickle.load(f)
+    # SARA (ISO 13855) uses its own constant-velocity reachable set and ignores the conformal
+    # calibrator entirely; make that explicit so a stray calibrator path can't leak in.
+    human_calibrator = None if args.human_set == "sara" else calibrator
     horizon_times, pred_c, pred_r, true_c, true_r, human_input = build_human_arrays(
         results, args.fps, args.mask_ood, args.mask_too_fast, OOD_THRESHOLD,
         SET_LIKELIHOOD, SARA_MEASUREMENT_UNCERTAINTY, HUMAN_RADIUS,
         args.calibrate, COV_CALIBRATION_CT, COV_CALIBRATION_IT, COV_CALIBRATION_FACTORS,
-        args.max_human_samples, rng, conformal_calibrator=calibrator,
+        args.max_human_samples, rng, conformal_calibrator=human_calibrator,
+        human_set=args.human_set, v_human=V_HUMAN_ISO,
     )
     M, S, J, _ = pred_c.shape
     if M == 0:
         raise SystemExit("No eligible human samples after filtering — relax --mask_ood/--mask_too_fast.")
+    print(f"Predicted human occupancy model: {args.human_set}"
+          + (" (ISO 13855 constant-velocity reachable set)" if args.human_set == "sara"
+             else " (motion-model conformal/affine set)"))
     print(f"  human horizon steps (s): {np.round(horizon_times, 3).tolist()}")
     print(f"  max robot interval tp_end: {robot['tp_end'].max():.3f}s "
           f"(human horizon max {horizon_times[-1]:.3f}s)")
@@ -869,8 +907,18 @@ def main():
             group_id=group_id, H_c=H_c, H_r=H_r, R_c=R_c, R_r=R_r,
         )
 
-    poses = sample_robot_poses(args.num_robot_poses, args.pose_radius, args.pose_z_offset, rng)
     n_traj = len(times_ms)
+    # Derive the number of robot poses from a target test-cycle count N so every method reaches
+    # approximately the same N even when OOD/too-fast filtering changes the eligible sample count M.
+    if args.n_test_cycles is not None:
+        per_pose = max(1, n_traj * M)
+        num_robot_poses = max(1, int(round(args.n_test_cycles / per_pose)))
+        print(f"Target N = {args.n_test_cycles:.3e} test cycles over {n_traj} trajectories x {M} "
+              f"human samples -> {num_robot_poses:,} robot poses "
+              f"(N ~= {num_robot_poses * per_pose:.3e}).")
+    else:
+        num_robot_poses = args.num_robot_poses
+    poses = sample_robot_poses(num_robot_poses, args.pose_radius, args.pose_z_offset, rng)
 
     # ----------------------------------------------------------------- parity check (CPU vs GPU)
     if args.parity > 0:
@@ -1011,11 +1059,16 @@ def main():
 
     # ----------------------------------------------------------------- CSV summary (one row/run)
     if args.results_csv:
-        set_likelihood = float(calibrator["level"]) if calibrator is not None else float(SET_LIKELIHOOD)
-        set_kind = ("conditional_conformal" if calibrator is not None
-                    else ("affine" if args.calibrate else "raw"))
+        # SARA ignores the calibrator (human_calibrator forced to None above); the model modes use
+        # the loaded calibrator (conditional-conformal) or fall back to affine/raw.
+        used_calibrator = None if args.human_set == "sara" else calibrator
+        set_likelihood = float(used_calibrator["level"]) if used_calibrator is not None else float(SET_LIKELIHOOD)
+        set_kind = ("sara" if args.human_set == "sara"
+                    else ("conditional_conformal" if used_calibrator is not None
+                          else ("affine" if args.calibrate else "raw")))
         row = dict(
-            results_file=os.path.basename(args.results_file), set_kind=set_kind,
+            results_file=os.path.basename(args.results_file), human_set=args.human_set,
+            set_kind=set_kind,
             set_likelihood=set_likelihood, backend=args.backend, mask_ood=args.mask_ood,
             mask_too_fast=args.mask_too_fast, num_robot_poses=len(poses), pose_radius=args.pose_radius,
             pose_z_offset=args.pose_z_offset, robot_stride=args.robot_stride, seed=args.seed,

@@ -249,6 +249,31 @@ def main():
         filename="coverage_stats_conformal_prediction_sets",
         output_dir=args.output_dir,
     )
+
+    # OOD-filtered conformal prediction sets ("ours with OOD filtered"): the same conformal sets,
+    # evaluated only on the in-distribution samples (OOD score <= OOD_THRESHOLD). This is the third
+    # row of the final results table; the two rows above use all samples ("without OOD filtered").
+    is_oods_np = np.asarray(is_oods).astype(bool).ravel()
+    keep_id = ~is_oods_np
+    n_ood = int(is_oods_np.sum())
+    print(f"OOD filtering: {n_ood}/{is_oods_np.size} samples flagged OOD "
+          f"(score > OOD_THRESHOLD={OOD_THRESHOLD:g}); {int(keep_id.sum())} in-distribution kept.")
+    if keep_id.any():
+        coverage_stats_conformal_ood_filtered, _ = simple_coverage_stats_sara(
+            predictions=predictions[keep_id],
+            radius=radius_conformal_prediction_sets[keep_id],
+            targets=targets[keep_id],
+        )
+        print("Predicted conformal set coverage stats (OOD-filtered, in-distribution only):")
+        print_simple_coverage_stats_sara(coverage_stats_conformal_ood_filtered)
+        save_coverage_stats_sara(
+            coverage_stats_conformal_ood_filtered,
+            filename="coverage_stats_conformal_prediction_sets_ood_filtered",
+            output_dir=args.output_dir,
+        )
+    else:
+        print("No in-distribution samples after OOD filtering — skipping the OOD-filtered table.")
+
     print("====================================")
     print("SARA Coverage Stats")
     print("====================================")

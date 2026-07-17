@@ -438,13 +438,24 @@ def simple_coverage_stats_sara(
     within_set = distances <= radius
     masked_within_set = np.ma.array(within_set, mask=full_mask)
     masked_radius = np.ma.array(radius / 1000.0, mask=full_mask)
+    # Per-sphere volume [N, T, J] (m^3): stats are taken over the individual spheres, not the sphere
+    # of the mean radius (4/3 pi (mean r)^3). The distribution is heavy-tailed (a few OOD spheres are
+    # huge), so we report the 5/50/95 percentiles alongside the mean/std for a robust volume summary.
+    masked_volume = 4.0 / 3.0 * np.pi * np.power(masked_radius, 3.0)
+    vol_valid = np.asarray(masked_volume.compressed())  # 1-D valid per-sphere volumes
+    p5, p50, p95 = (np.percentile(vol_valid, [5, 50, 95]) if vol_valid.size
+                    else (np.nan, np.nan, np.nan))
     coverage_stats = {
         "overall_within_set": float(masked_within_set.mean()),
         "per_joint_within_set": np.array(masked_within_set.mean(axis=(0, 1))),
         "per_frame_within_set": np.array(masked_within_set.mean(axis=(0, 2))),
-        "overall_volume": 4.0 / 3.0 * np.pi * np.power(float(masked_radius.mean()), 3.0),
-        "per_joint_volume": 4.0 / 3.0 * np.pi * np.power(np.array(masked_radius.mean(axis=(0, 1))), 3.0),
-        "per_frame_volume": 4.0 / 3.0 * np.pi * np.power(np.array(masked_radius.mean(axis=(0, 2))), 3.0),
+        "overall_volume": float(masked_volume.mean()),
+        "overall_volume_std": float(masked_volume.std()),
+        "overall_volume_p5": float(p5),
+        "overall_volume_p50": float(p50),
+        "overall_volume_p95": float(p95),
+        "per_joint_volume": np.array(masked_volume.mean(axis=(0, 1))),
+        "per_frame_volume": np.array(masked_volume.mean(axis=(0, 2))),
     }
     return coverage_stats, within_set
 
@@ -473,8 +484,12 @@ def save_coverage_stats_sara(
     with open(output_file, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['metric', 'value'])
-        writer.writerow(['overall_coverage_percent', f'{coverage_stats["overall_within_set"] * 100:.2f}'])
+        writer.writerow(['overall_coverage_percent', f'{coverage_stats["overall_within_set"] * 100:.4f}'])
         writer.writerow(['overall_volume_m3', f'{coverage_stats["overall_volume"]:.6f}'])
+        writer.writerow(['overall_volume_std_m3', f'{coverage_stats.get("overall_volume_std", float("nan")):.6f}'])
+        writer.writerow(['overall_volume_p5_m3', f'{coverage_stats.get("overall_volume_p5", float("nan")):.6f}'])
+        writer.writerow(['overall_volume_p50_m3', f'{coverage_stats.get("overall_volume_p50", float("nan")):.6f}'])
+        writer.writerow(['overall_volume_p95_m3', f'{coverage_stats.get("overall_volume_p95", float("nan")):.6f}'])
 
         per_frame_within = coverage_stats["per_frame_within_set"]
         per_frame_volume = coverage_stats["per_frame_volume"]
