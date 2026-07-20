@@ -17,17 +17,23 @@ Usage::
         --output results/final/all_conformal_results.tex
 """
 import argparse
+import math
 import os
 
 from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
-    METHODS, METHOD_LABELS, bold, fmt_num, fmt_pl, read_coverage_by_method, read_shield_by_method,
+    METHODS, METHOD_LABELS, bold, fmt_num, fmt_pl, miss_rate, nines_of_reliability,
+    read_coverage_by_method, read_shield_by_method, sci_cell,
 )
+
+# Above this many verified-but-contact cases the count is shown in scientific notation.
+_CONTACT_SCI_THRESHOLD = 10000
 
 
 def generate_table(cov, shield, confidence):
     """Build the combined LaTeX table from coverage + shield dicts (both keyed by method)."""
     cov_present = [m for m in METHODS if m in cov]
     sh_present = [m for m in METHODS if m in shield]
+    # Miss-rate (lower better) and nines of reliability (higher better) both rank by coverage.
     best_cov = max(cov_present, key=lambda m: cov[m]["coverage_percent"]) if cov_present else None
     best_p = {q: (min(cov_present, key=lambda m: cov[m][f"volume_{q}_m3"]) if cov_present else None)
               for q in ("p5", "p50", "p95")}
@@ -36,51 +42,60 @@ def generate_table(cov, shield, confidence):
     best_pfh = min(sh_present, key=lambda m: shield[m]["pfh_d"]) if sh_present else None
 
     n = shield[best_pfh]["total_pairs"] if best_pfh else 0
+
+    def contact_cell(k, is_bold):
+        body = (f"\\num{{{fmt_num(k, 1)}}}" if k >= _CONTACT_SCI_THRESHOLD else f"{k:,}")
+        return bold(body, is_bold)
+
     lines = [
         r"\begin{table*}[t]",
         r"    \centering",
         r"    \caption{Motion prediction evaluation and certification simulation on H36M test data. "
-        r"The first columns report the coverage and volume (5/50/95 percentiles of the per-sphere "
-        r"volume) of the predicted sets. The last four columns report the results on "
-        r"$N = \num{" + fmt_num(n, 3) + r"}$ simulated HRC test cycles, measuring how often SARA "
+        r"The first columns report the miss-rate (rate of prediction outside of the predicted set), "
+        r"the nines of reliability and volume (\num{5}/\num{50}/\num{95} percentiles of the "
+        r"per-sphere volume) of the predicted sets. The last four columns report the results on "
+        r"$N = \num{" + fmt_num(n, 0) + r"}$ simulated HRC test cycles, measuring how often SARA "
         r"shield verified the monitored trajectory as safe ($c_{\text{safe}}$), the number of "
         r"contacts despite a verified trajectory ($c_{\text{safe}} \land \text{contact}$), and the "
         r"resulting PL.}",
         r"    \label{tab:all_conformal_results}",
-        r"    \begin{tabular}{lcccc|cccc}",
+        r"    \begin{tabular}{lccccc|cccc}",
         r"        \toprule",
-        r"        \multirow{2}{*}{\textbf{Method}} & \multirow{2}{*}{$\uparrow$ Coverage (\%)} & "
+        r"        \multirow{2}[3]{*}{\textbf{Method}} & \multicolumn{2}{c}{Coverage} & "
         r"\multicolumn{3}{c|}{$\downarrow$ Volume ($m^3$)} & "
-        r"\multirow{2}{*}{$\uparrow$ $c_{\text{safe}}$ (\%)} & "
-        r"\multirow{2}{*}{$\downarrow$ $c_{\text{safe}} \land \text{contact}$} & "
-        r"\multirow{2}{*}{$\downarrow$ PFH$_D$ (1/h)} & \multirow{2}{*}{PL} \\",
-        r"        \cmidrule(lr){3-5}",
-        r"         & & 5\% & 50\% & 95\% & & & & \\",
+        r"\multirow{2}[3]{*}{$\uparrow$ $c_{\text{safe}}$ (\%)} & "
+        r"\multirow{2}[3]{*}{$\downarrow$ $c_{\text{safe}} \land \text{contact}$} & "
+        r"\multirow{2}[3]{*}{$\downarrow$ PFH$_\text{D}$ (1/h)} & \multirow{2}[3]{*}{PL} \\",
+        r"        \cmidrule(lr){2-3} \cmidrule(lr){4-6}",
+        r"         & $\downarrow$ Miss-rate & $\uparrow$ 9s of reliability & 5\% & 50\% & 95\% "
+        r"& & & & \\",
         r"        \midrule",
     ]
     for m in METHODS:
         if m not in cov and m not in shield:
             continue
-        # coverage / volume cells
+        # coverage cells: miss-rate + nines of reliability
         if m in cov:
             c = cov[m]
-            cov_s = bold(f"{c['coverage_percent']:.4f}", m == best_cov)
+            miss_s = sci_cell(miss_rate(c["coverage_percent"]), m == best_cov, digits=1)
+            k = nines_of_reliability(c["coverage_percent"])
+            nines_s = bold(r"$\infty$" if math.isinf(k) else f"{k:.2f}", m == best_cov)
             v5 = bold(f"{c['volume_p5_m3']:.3f}", m == best_p["p5"])
             v50 = bold(f"{c['volume_p50_m3']:.3f}", m == best_p["p50"])
             v95 = bold(f"{c['volume_p95_m3']:.3f}", m == best_p["p95"])
         else:
-            cov_s = v5 = v50 = v95 = "X"
+            miss_s = nines_s = v5 = v50 = v95 = "X"
         # shield cells
         if m in shield:
             s = shield[m]
             safe_s = bold(f"{s['pct_verified']:.2f}", m == best_safe)
-            contact_s = bold(f"{s['n_verified_contact']:,}", m == best_contact)
-            pfh_s = bold(f"\\num{{{fmt_num(s['pfh_d'])}}}", m == best_pfh)
+            contact_s = contact_cell(s["n_verified_contact"], m == best_contact)
+            pfh_s = sci_cell(s["pfh_d"], m == best_pfh, digits=2)
             pl_s = bold(fmt_pl(s["pl"]), m == best_pfh)
         else:
             safe_s = contact_s = pfh_s = pl_s = "X"
         lines.append(
-            f"        {METHOD_LABELS[m]} & {cov_s} & {v5} & {v50} & {v95} & "
+            f"        {METHOD_LABELS[m]} & {miss_s} & {nines_s} & {v5} & {v50} & {v95} & "
             f"{safe_s} & {contact_s} & {pfh_s} & {pl_s} \\\\"
         )
     lines += [r"        \bottomrule", r"    \end{tabular}", r"\end{table*}", ""]

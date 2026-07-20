@@ -9,6 +9,7 @@ This module centralizes the method definitions, the LaTeX row labels, and the re
 CSV kinds so the three generators stay consistent (same row order, same method -> row mapping).
 """
 import csv
+import math
 import os
 
 # Canonical method keys, in table row order.
@@ -16,9 +17,9 @@ METHODS = ["iso_no_ood", "ours_no_ood", "ours_ood"]
 
 # LaTeX row label per method.
 METHOD_LABELS = {
-    "iso_no_ood": r"ISO 13855~\cite{iso_2010_SafetyMachinery} without OOD filtered",
-    "ours_no_ood": r"Ours without OOD filtered",
-    "ours_ood": r"Ours with OOD filtered",
+    "iso_no_ood": r"ISO 13855",
+    "ours_no_ood": r"Ours with OOD inputs",
+    "ours_ood": r"Ours OOD filtered",
 }
 
 # Conformal coverage CSV file per method (written by examples.motion_prediction).
@@ -109,6 +110,18 @@ def fmt_sci(x):
     return f"{mant:.2f} \\times 10^{{{exp}}}"
 
 
+def _mantissa_exp(x):
+    """Decompose x into (signed mantissa in [1,10), integer exponent). x must be nonzero."""
+    exp, mant = 0, abs(x)
+    while mant >= 10.0:
+        mant /= 10.0
+        exp += 1
+    while mant < 1.0:
+        mant *= 10.0
+        exp -= 1
+    return (-mant if x < 0 else mant), exp
+
+
 def fmt_num(x, digits=2):
     """Format a float for siunitx \\num, e.g. 4.87e-07 -> '4.87e-7', 2.175e13 -> '2.175e13'.
 
@@ -117,15 +130,31 @@ def fmt_num(x, digits=2):
     x = float(x)
     if x == 0:
         return "0"
-    exp, mant = 0, abs(x)
-    while mant >= 10.0:
-        mant /= 10.0
-        exp += 1
-    while mant < 1.0:
-        mant *= 10.0
-        exp -= 1
-    sign = "-" if x < 0 else ""
-    return f"{sign}{mant:.{digits}f}e{exp}"
+    mant, exp = _mantissa_exp(x)
+    return f"{mant:.{digits}f}e{exp}"
+
+
+def sci_cell(x, is_bold=False, digits=2):
+    """Scientific-notation table cell. Non-bold uses siunitx \\num; bold uses an explicit
+    \\mathbf{m \\times 10^{e}} (siunitx \\num does not bold cleanly)."""
+    x = float(x)
+    if not is_bold:
+        return "0" if x == 0 else f"\\num{{{fmt_num(x, digits)}}}"
+    if x == 0:
+        return r"\textbf{0}"
+    mant, exp = _mantissa_exp(x)
+    return f"$\\mathbf{{{mant:.{digits}f} \\times 10^{{{exp}}}}}$"
+
+
+def miss_rate(coverage_percent):
+    """Miss-rate p_miss = 1 - p_coverage (rate of a prediction landing outside the set)."""
+    return 1.0 - float(coverage_percent) / 100.0
+
+
+def nines_of_reliability(coverage_percent):
+    """Nines of reliability k = -log10(p_miss); inf if the empirical miss-rate is 0."""
+    pm = miss_rate(coverage_percent)
+    return math.inf if pm <= 0 else -math.log10(pm)
 
 
 def fmt_pl(pl):

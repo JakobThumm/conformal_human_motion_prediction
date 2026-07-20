@@ -2716,33 +2716,53 @@ Settings:
   ]
 },
 ```
+
+# Motion Prediction Conformal Prediction Sets Results
+
+\begin{table}[h]
+    \centering
+    \caption{Conformal prediction set test results on H36M. Volume is reported as the 5/50/95 percentiles of the per-sphere volume.}
+    \label{tab:conformal_prediction_set}
+    \begin{tabular}{lcccc}
+        \toprule
+        \multirow{2}{*}{\textbf{Method}} & \multirow{2}{*}{$\uparrow$ Coverage (\%)} & \multicolumn{3}{c}{$\downarrow$ Volume ($m^3$)} \\
+        \cmidrule(lr){3-5}
+         & & 5\% & 50\% & 95\% \\
+        \midrule
+        ISO 13855~\cite{iso_2010_SafetyMachinery} without OOD filtered & 99.9193 & 0.017 & 0.687 & 3.252 \\
+        Ours without OOD filtered & 99.9785 & 0.015 & 0.091 & 0.664 \\
+        Ours with OOD filtered & \textbf{99.9835} & \textbf{0.015} & \textbf{0.088} & \textbf{0.638} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
 # Safety Shield Simulation Results
 
 ==================== Shield simulation results ====================
-Random robot poses     : 4000000
+Random robot poses     : 3678536
 Monitored trajectories : 95
-Eligible human samples : 57230
-Total (pose, traj, human) trials : 21,747,400,000,000
-Intervals without ground-truth robot state (past log end): 12,000,000
-Poses fully culled at level 1: 3320408/4000000
+Eligible human samples : 57231
+Total (pose, traj, human) trials : 19,999,997,912,520
+Intervals without ground-truth robot state (past log end): 11,035,608
+Poses fully culled at level 1: 3054046/3678536
 Level-5 survivors (detailed-checked): predicted 0.000%, true 0.000% of trials (rest culled by the hierarchy)
 -------------------------------------------------------------------
-Verified (shield says safe) : 21,578,845,943,917  (99.225% of trials)
-True contact                : 67,318,469,189  (0.310% of trials)
-True unsafe contact         : 28,097,133,465  (0.129% of trials)
+Verified (shield says safe) : 19,845,177,378,034  (99.226% of trials)
+True contact                : 61,713,951,592  (0.309% of trials)
+True unsafe contact         : 25,705,000,040  (0.129% of trials)
 -------------------------------------------------------------------
->>> Verified BUT contact        : 1  (0.0000% of verified, 0.0000% of trials)
->>> Verified BUT unsafe contact : 1  (0.0000% of verified, 0.0000% of trials)
+>>> Verified BUT contact        : 0  (0.0000% of verified, 0.0000% of trials)
+>>> Verified BUT unsafe contact : 0  (0.0000% of verified, 0.0000% of trials)
 ===================================================================
 
 ============== PFH_D (dangerous failure rate) per ISO 13849-1 ==============
 Dangerous failure = verified BUT unsafe contact (speed > V_ROBOT_ISO = 0.25 m/s)
-Test cycles N = 21,747,400,000,000   dangerous failures k = 1   t_cycle = 0.004 s
+Test cycles N = 19,999,997,912,520   dangerous failures k = 0   t_cycle = 0.004 s
 confidence |  PFC_D upper (1/cyc) |  PFH_D upper (1/h) | PL
 ------------------------------------------------------------------------
-    0.9900 |            3.052e-13 |          2.747e-07 | d
-    0.9990 |            4.246e-13 |          3.821e-07 | d
-    0.9999 |            5.406e-13 |          4.865e-07 | d
+    0.9900 |            2.303e-13 |          2.072e-07 | d
+    0.9990 |            3.454e-13 |          3.108e-07 | d
+    0.9999 |            4.605e-13 |          4.145e-07 | d
 ============================================================================
 
 Appended run summary to /home/thumm/code/conformal_human_motion_prediction/results/final/robot_shield/shield_results.csv
@@ -2750,454 +2770,21 @@ Saved table to results/final/robot_shield/robot_shield_safety.tex
 
 \begin{table}[h]
     \centering
-    \caption{Robot-shield safety evaluation on H36M. Each row is one conformal prediction-set likelihood; a \emph{dangerous failure} is a trajectory the shield verifies as safe while the ground truth has an unsafe contact ($v_\mathrm{robot} > V_\mathrm{ISO}$). PFH$_D$ is the one-sided Clopper-Pearson upper bound at confidence $99.99\%$ over $N = 21,747,400,000,000$ test cycles ($t_\mathrm{cycle} = 0.004$ s).}
+    \caption{Certification simulation on H36M test data over $N = \num{2.000e13}$ simulated HRC test cycles ($t_\mathrm{cycle} = 0.004$ s). PFH$_D$ is the one-sided Clopper-Pearson upper
+ bound at confidence $99.99\%$.}
     \label{tab:robot_shield_safety}
-    \begin{tabular}{lccccc}
+    \begin{tabular}{lcccc}
         \toprule
-        Set likelihood & $\uparrow$ Verified (\%) & Unsafe contact (\%) & $\downarrow$ Dangerous failures & $\downarrow$ PFH$_D$ (1/h) & PL \\
+        \textbf{Method} & $\uparrow$ $c_{\text{safe}}$ (\%) & $\downarrow$ $c_{\text{safe}} \land \text{contact}$ & $\downarrow$ PFH$_D$ (1/h) & PL \\
         \midrule
-        \textbf{99.99\%} & 99.22 & 0.129 & \textbf{1} & \textbf{$4.87 \times 10^{-7}$} & \textbf{PL d} \\
+        ISO 13855~\cite{iso_2010_SafetyMachinery} without OOD filtered & 98.91 & 12,206,306 & \num{1.49e-1} & none \\
+        Ours without OOD filtered & 99.21 & 2 & \num{6.27e-7} & PL d \\
+        Ours with OOD filtered & \textbf{99.23} & \textbf{0} & \textbf{\num{4.14e-7}} & \textbf{PL d} \\
         \bottomrule
     \end{tabular}
 \end{table}
 
 # New Pipeline Results
-================================
-Evaluating 3D pose estimation.
-================================
-
-Overall MPJPE: 60.73 mm
-
-Per-Time Errors:
-  Time point 1 error =   60.73 mm
-
-Per-Joint Errors:
-  Joint 1 error =   52.36 mm
-  Joint 2 error =   52.24 mm
-  Joint 3 error =   54.42 mm
-  Joint 4 error =   64.41 mm
-  Joint 5 error =   67.92 mm
-  Joint 6 error =   75.19 mm
-  Joint 7 error =   74.43 mm
-  Joint 8 error =   54.40 mm
-  Joint 9 error =   56.15 mm
-  Joint 10 error =   53.16 mm
-  Joint 11 error =   54.13 mm
-  Joint 12 error =   63.94 mm
-  Joint 13 error =   66.69 mm
-Saved overall MPJPE results to results/final/full_pipeline/n_correct_poses_required_50/pose_estimation/mpjpe_results_test.csv
-Saved per-time MPJPE results to results/final/full_pipeline/n_correct_poses_required_50/pose_estimation/per_time_mpjpe_results_test.csv
-Saved per-joint MPJPE results to results/final/full_pipeline/n_correct_poses_required_50/pose_estimation/per_joint_mpjpe_results_test.csv
-
-Uncertainty Coverage Stats:
-  Overall coverage within 1 std: 44.27%
-  Overall coverage within 2 std: 71.76%
-  Overall coverage within 3 std: 85.63%
-  Overall coverage within 4 std: 92.18%
-
-Per-Time Coverage Stats:
-
-  Overall coverage within 1 std:
-    Frame 0: 44.27%
-
-  Overall coverage within 2 std:
-    Frame 0: 71.76%
-
-  Overall coverage within 3 std:
-    Frame 0: 85.63%
-
-  Overall coverage within 4 std:
-    Frame 0: 92.18%
-
-Per-Joint Coverage Stats:
-
-  Overall coverage within 1 std:
-    Joint 0: 17.16%
-    Joint 1: 36.34%
-    Joint 2: 33.52%
-    Joint 3: 45.53%
-    Joint 4: 41.84%
-    Joint 5: 53.91%
-    Joint 6: 54.88%
-    Joint 7: 49.18%
-    Joint 8: 45.44%
-    Joint 9: 54.48%
-    Joint 10: 50.39%
-    Joint 11: 50.10%
-    Joint 12: 42.70%
-
-  Overall coverage within 2 std:
-    Joint 0: 30.80%
-    Joint 1: 65.49%
-    Joint 2: 61.66%
-    Joint 3: 74.14%
-    Joint 4: 70.86%
-    Joint 5: 80.70%
-    Joint 6: 82.36%
-    Joint 7: 79.28%
-    Joint 8: 76.39%
-    Joint 9: 81.90%
-    Joint 10: 79.18%
-    Joint 11: 77.47%
-    Joint 12: 72.59%
-
-  Overall coverage within 3 std:
-    Joint 0: 46.71%
-    Joint 1: 83.80%
-    Joint 2: 80.64%
-    Joint 3: 87.50%
-    Joint 4: 86.27%
-    Joint 5: 91.45%
-    Joint 6: 93.01%
-    Joint 7: 91.48%
-    Joint 8: 90.16%
-    Joint 9: 92.94%
-    Joint 10: 91.34%
-    Joint 11: 89.89%
-    Joint 12: 87.96%
-
-  Overall coverage within 4 std:
-    Joint 0: 64.35%
-    Joint 1: 91.13%
-    Joint 2: 89.99%
-    Joint 3: 93.21%
-    Joint 4: 93.23%
-    Joint 5: 95.83%
-    Joint 6: 96.36%
-    Joint 7: 96.23%
-    Joint 8: 95.54%
-    Joint 9: 96.73%
-    Joint 10: 96.02%
-    Joint 11: 95.25%
-    Joint 12: 94.46%
-Saved overall coverage results to results/final/full_pipeline/n_correct_poses_required_50/pose_estimation/coverage_results_test.csv
-Saved per-time coverage results to results/final/full_pipeline/n_correct_poses_required_50/pose_estimation/per_time_coverage_results_test.csv
-Saved per-joint coverage results to results/final/full_pipeline/n_correct_poses_required_50/pose_estimation/per_joint_coverage_results_test.csv
-================================
-Evaluating motion prediction.
-================================
-================================
-Evaluating motion uncertainty prediction.
-================================
-
-Overall MPJPE: 53.36 mm
-
-Per-Time Errors:
-  Time point 1 error =   35.01 mm
-  Time point 2 error =   36.55 mm
-  Time point 3 error =   39.18 mm
-  Time point 4 error =   44.02 mm
-  Time point 5 error =   48.82 mm
-  Time point 6 error =   54.56 mm
-  Time point 7 error =   59.89 mm
-  Time point 8 error =   65.97 mm
-  Time point 9 error =   71.64 mm
-  Time point 10 error =   77.97 mm
-
-Per-Joint Errors:
-  Joint 1 error =   38.46 mm
-  Joint 2 error =   40.68 mm
-  Joint 3 error =   41.42 mm
-  Joint 4 error =   68.45 mm
-  Joint 5 error =   65.11 mm
-  Joint 6 error =   94.80 mm
-  Joint 7 error =   86.91 mm
-  Joint 8 error =   40.46 mm
-  Joint 9 error =   39.78 mm
-  Joint 10 error =   39.67 mm
-  Joint 11 error =   38.97 mm
-  Joint 12 error =   48.42 mm
-  Joint 13 error =   50.57 mm
-Saved overall MPJPE results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/mpjpe_results_test.csv
-Saved per-time MPJPE results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/per_time_mpjpe_results_test.csv
-Saved per-joint MPJPE results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/per_joint_mpjpe_results_test.csv
-
-Uncertainty Coverage Stats:
-  Overall coverage within 1 std: 96.60%
-  Overall coverage within 2 std: 99.30%
-  Overall coverage within 3 std: 99.81%
-  Overall coverage within 4 std: 99.94%
-
-Per-Time Coverage Stats:
-
-  Overall coverage within 1 std:
-    Frame 0: 98.72%
-    Frame 1: 98.36%
-    Frame 2: 98.03%
-    Frame 3: 97.35%
-    Frame 4: 96.92%
-    Frame 5: 96.46%
-    Frame 6: 95.71%
-    Frame 7: 95.33%
-    Frame 8: 94.80%
-    Frame 9: 94.33%
-
-  Overall coverage within 2 std:
-    Frame 0: 99.87%
-    Frame 1: 99.81%
-    Frame 2: 99.72%
-    Frame 3: 99.59%
-    Frame 4: 99.43%
-    Frame 5: 99.27%
-    Frame 6: 99.06%
-    Frame 7: 98.91%
-    Frame 8: 98.73%
-    Frame 9: 98.64%
-
-  Overall coverage within 3 std:
-    Frame 0: 99.97%
-    Frame 1: 99.96%
-    Frame 2: 99.93%
-    Frame 3: 99.91%
-    Frame 4: 99.86%
-    Frame 5: 99.81%
-    Frame 6: 99.73%
-    Frame 7: 99.69%
-    Frame 8: 99.63%
-    Frame 9: 99.60%
-
-  Overall coverage within 4 std:
-    Frame 0: 100.00%
-    Frame 1: 99.99%
-    Frame 2: 99.98%
-    Frame 3: 99.97%
-    Frame 4: 99.95%
-    Frame 5: 99.94%
-    Frame 6: 99.91%
-    Frame 7: 99.91%
-    Frame 8: 99.88%
-    Frame 9: 99.87%
-
-Per-Joint Coverage Stats:
-
-  Overall coverage within 1 std:
-    Joint 0: 96.53%
-    Joint 1: 97.33%
-    Joint 2: 96.95%
-    Joint 3: 91.94%
-    Joint 4: 97.40%
-    Joint 5: 95.26%
-    Joint 6: 96.14%
-    Joint 7: 98.18%
-    Joint 8: 98.21%
-    Joint 9: 96.93%
-    Joint 10: 96.78%
-    Joint 11: 97.25%
-    Joint 12: 96.91%
-
-  Overall coverage within 2 std:
-    Joint 0: 99.25%
-    Joint 1: 99.59%
-    Joint 2: 99.56%
-    Joint 3: 98.12%
-    Joint 4: 99.62%
-    Joint 5: 99.12%
-    Joint 6: 99.17%
-    Joint 7: 99.74%
-    Joint 8: 99.72%
-    Joint 9: 99.37%
-    Joint 10: 99.22%
-    Joint 11: 99.31%
-    Joint 12: 99.16%
-
-  Overall coverage within 3 std:
-    Joint 0: 99.79%
-    Joint 1: 99.89%
-    Joint 2: 99.88%
-    Joint 3: 99.55%
-    Joint 4: 99.93%
-    Joint 5: 99.81%
-    Joint 6: 99.80%
-    Joint 7: 99.93%
-    Joint 8: 99.92%
-    Joint 9: 99.79%
-    Joint 10: 99.72%
-    Joint 11: 99.79%
-    Joint 12: 99.73%
-
-  Overall coverage within 4 std:
-    Joint 0: 99.92%
-    Joint 1: 99.96%
-    Joint 2: 99.96%
-    Joint 3: 99.89%
-    Joint 4: 99.99%
-    Joint 5: 99.96%
-    Joint 6: 99.94%
-    Joint 7: 99.97%
-    Joint 8: 99.97%
-    Joint 9: 99.92%
-    Joint 10: 99.90%
-    Joint 11: 99.94%
-    Joint 12: 99.90%
-Saved overall coverage results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/coverage_results_test.csv
-Saved per-time coverage results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/per_time_coverage_results_test.csv
-Saved per-joint coverage results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/per_joint_coverage_results_test.csv
-Predicted spherical reachable set coverage stats for 0.9999 likelihood:
-Overall coverage within set: 99.94%
-Mean volume = 0.1530 m^3
-
-Per-Time Coverage Stats:
-    Frame 0: 100.00%
-    Frame 1: 100.00%
-    Frame 2: 99.99%
-    Frame 3: 99.97%
-    Frame 4: 99.96%
-    Frame 5: 99.94%
-    Frame 6: 99.92%
-    Frame 7: 99.89%
-    Frame 8: 99.87%
-    Frame 9: 99.83%
-
-Per-Time Volume [m^3]:
-    Frame 0: 0.0918
-    Frame 1: 0.0967
-    Frame 2: 0.1058
-    Frame 3: 0.1190
-    Frame 4: 0.1367
-    Frame 5: 0.1579
-    Frame 6: 0.1801
-    Frame 7: 0.2068
-    Frame 8: 0.2344
-    Frame 9: 0.2682
-
-Per-Joint Coverage Stats:
-    Joint 0: 99.96%
-    Joint 1: 99.95%
-    Joint 2: 99.94%
-    Joint 3: 99.93%
-    Joint 4: 99.95%
-    Joint 5: 99.75%
-    Joint 6: 99.89%
-    Joint 7: 99.97%
-    Joint 8: 99.94%
-    Joint 9: 99.96%
-    Joint 10: 99.98%
-    Joint 11: 99.98%
-    Joint 12: 99.98%
-
-Per-Joint Volume [m^3]:
-    Joint 0: 0.0940
-    Joint 1: 0.0619
-    Joint 2: 0.0601
-    Joint 3: 0.1863
-    Joint 4: 0.2240
-    Joint 5: 0.3279
-    Joint 6: 0.4636
-    Joint 7: 0.0590
-    Joint 8: 0.0440
-    Joint 9: 0.0912
-    Joint 10: 0.1119
-    Joint 11: 0.3366
-    Joint 12: 0.3415
-Saved SARA coverage results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/sara_coverage_predictions_test.csv
-================================
-Evaluating motion SARA uncertainty.
-================================
-SARA simple velocity model coverage stats:
-Overall coverage within set: 98.87%
-Mean volume = 0.3691 m^3
-
-Per-Time Coverage Stats:
-    Frame 0: 94.96%
-    Frame 1: 98.23%
-    Frame 2: 98.95%
-    Frame 3: 99.22%
-    Frame 4: 99.36%
-    Frame 5: 99.45%
-    Frame 6: 99.54%
-    Frame 7: 99.61%
-    Frame 8: 99.68%
-    Frame 9: 99.73%
-
-Per-Time Volume [m^3]:
-    Frame 0: 0.0026
-    Frame 1: 0.0188
-    Frame 2: 0.0616
-    Frame 3: 0.1438
-    Frame 4: 0.2783
-    Frame 5: 0.4779
-    Frame 6: 0.7555
-    Frame 7: 1.1240
-    Frame 8: 1.5963
-    Frame 9: 2.1851
-
-Per-Joint Coverage Stats:
-    Joint 0: 99.83%
-    Joint 1: 99.78%
-    Joint 2: 99.83%
-    Joint 3: 98.91%
-    Joint 4: 98.90%
-    Joint 5: 97.09%
-    Joint 6: 97.35%
-    Joint 7: 99.78%
-    Joint 8: 99.76%
-    Joint 9: 99.60%
-    Joint 10: 99.72%
-    Joint 11: 97.33%
-    Joint 12: 97.48%
-
-Per-Joint Volume [m^3]:
-    Joint 0: 0.3691
-    Joint 1: 0.3691
-    Joint 2: 0.3691
-    Joint 3: 0.3691
-    Joint 4: 0.3691
-    Joint 5: 0.3691
-    Joint 6: 0.3691
-    Joint 7: 0.3691
-    Joint 8: 0.3691
-    Joint 9: 0.3691
-    Joint 10: 0.3691
-    Joint 11: 0.3691
-    Joint 12: 0.3691
-Saved SARA coverage results to results/final/full_pipeline/n_correct_poses_required_50/motion_prediction/sara_coverage_sara_test.csv
-Saved OOD histogram to results/final/full_pipeline/n_correct_poses_required_50/ood_histogram_pose_prediction.png
-Saved OOD histogram to results/final/full_pipeline/n_correct_poses_required_50/ood_histogram_motion_prediction.png
-OOD score percentiles — pose prediction OOD scores (n=49249):
-  p  0.01: 0.000394
-  p  0.10: 0.000410
-  p  0.50: 0.000437
-  p  1.00: 0.000457
-  p  3.00: 0.000506
-  p  5.00: 0.000543
-  p 10.00: 0.000632
-  p 25.00: 0.000948
-  p 50.00: 0.001768
-  p 75.00: 0.003931
-  p 90.00: 0.008886
-  p 95.00: 0.016002
-  p 97.00: 0.025286
-  p 99.00: 0.201368
-  p 99.50: 0.280950
-  p 99.90: 0.385248
-  p 99.99: 0.575993
-Saved OOD score percentiles to results/final/full_pipeline/n_correct_poses_required_50/pose_ood_scores_percentiles.csv
-OOD score percentiles — motion prediction OOD scores (n=39534):
-  p  0.01: 28995.416016
-  p  0.10: 31748.419922
-  p  0.50: 35935.355469
-  p  1.00: 38129.097656
-  p  3.00: 43418.777344
-  p  5.00: 46535.535156
-  p 10.00: 52259.281250
-  p 25.00: 67985.898438
-  p 50.00: 108229.796875
-  p 75.00: 206090.140625
-  p 90.00: 320792.312500
-  p 95.00: 389301.875000
-  p 97.00: 437024.875000
-  p 99.00: 543093.625000
-  p 99.50: 643328.437500
-  p 99.90: 1160748.250000
-  p 99.99: 9780620.000000
-Saved OOD score percentiles to results/final/full_pipeline/n_correct_poses_required_50/motion_ood_scores_percentiles.csv
-Motion validity rate:  0.6148 (24307/39534)
-Motion OOD rate:       0.3652 (14438/39534)
-Pose buffer good/bad:  39534/9715 (ratio good/all = 0.8027)
-No motion output:      24942 (bad pose buffer: 9715, invalid motion: 15227)
-Saved motion validity stats to results/final/full_pipeline/n_correct_poses_required_50/motion_validity_stats.csv
-Saved table to /home/thumm/code/conformal_human_motion_prediction/src/conformal_human_motion_prediction/generate_plots/../../../results/final/full_pipeline/full_pipeline_results.tex
-
 \begin{table}[h]
     \centering
     \caption{Full pipeline evaluation results on H36M for varying $N_{\text{req}}$.}
@@ -3206,15 +2793,33 @@ Saved table to /home/thumm/code/conformal_human_motion_prediction/src/conformal_
         \toprule
         $N_{\text{req}}$ & $\downarrow$ $\mathcal{H}$ invalid [\%] & $\uparrow$ Motion valid [\%] & $\downarrow$ MPJPE [mm] \\
         \midrule
-        3 (ours) & \textbf{18.50} & \textbf{51.20} & 53.75 \\
-        5 & 18.66 & 50.94 & 53.77 \\
-        10 & 19.12 & 50.55 & 53.63 \\
-        50 & 19.73 & 49.36 & \textbf{53.36} \\
+        3 (ours) & \textbf{12.63} & \textbf{74.74} & 55.15 \\
+        5 & 13.52 & 73.62 & 55.03 \\
+        10 & 14.05 & 72.67 & 54.74 \\
+        50 & 16.57 & 68.70 & \textbf{54.14} \\
         \bottomrule
     \end{tabular}
 \end{table}
 
 Saved sentence to /home/thumm/code/conformal_human_motion_prediction/src/conformal_human_motion_prediction/generate_plots/../../../results/final/full_pipeline/full_pipeline_sentence.tex
 
-Our results in~\cref{tab:full_pipeline_results} show that our OOD pipeline reduces the rate of invalid pose buffers $\sum_{i=K_I - N_{\text{req}}+1}^{K_I} v_i < N_{\text{req}}$ by \SI{6.2}{\percent} while only increasing the average MPJPE by \SI{0.7}{\percent}.
+Our results in~\cref{tab:full_pipeline_results} show that our OOD pipeline reduces the rate of invalid pose buffers $\sum_{i=K_I - N_{\text{req}}+1}^{K_I} v_i < N_{\text{req}}$ by \SI{23.8}{\percent} while only increasing the average MPJPE by \SI{1.9}{\percent}.
 
+# Final Results Table
+
+\begin{table*}[t]
+    \centering
+    \caption{Motion prediction evaluation and certification simulation on H36M test data. The first columns report the coverage and volume (5/50/95 percentiles of the per-sphere volume) of the predicted sets. The last four columns report the results on $N = \num{2.000e13}$ simulated HRC test cycles, measuring how often SARA shield verified the monitored trajectory as safe ($c_{\text{safe}}$), the number of contacts despite a verified trajectory ($c_{\text{safe}} \land \text{contact}$), and the resulting PL.}
+    \label{tab:all_conformal_results}
+    \begin{tabular}{lcccc|cccc}
+        \toprule
+        \multirow{2}{*}{\textbf{Method}} & \multirow{2}{*}{$\uparrow$ Coverage (\%)} & \multicolumn{3}{c|}{$\downarrow$ Volume ($m^3$)} & \multirow{2}{*}{$\uparrow$ $c_{\text{safe}}$ (\%)} & \multirow{2}{*}{$\downarrow$ $c_{\text{safe}} \land \text{contact}$} & \multirow{2}{*}{$\downarrow$ PFH$_D$ (1/h)} & \multirow{2}{*}{PL} \\
+        \cmidrule(lr){3-5}
+         & & 5\% & 50\% & 95\% & & & & \\
+        \midrule
+        ISO 13855~\cite{iso_2010_SafetyMachinery} without OOD filtered & 99.9193 & 0.017 & 0.687 & 3.252 & 98.91 & 12,206,306 & \num{1.49e-1} & none \\
+        Ours without OOD filtered & 99.9785 & 0.015 & 0.091 & 0.664 & 99.21 & 2 & \num{6.27e-7} & PL d \\
+        Ours with OOD filtered & \textbf{99.9835} & \textbf{0.015} & \textbf{0.088} & \textbf{0.638} & \textbf{99.23} & \textbf{0} & \textbf{\num{4.14e-7}} & \textbf{PL d} \\
+        \bottomrule
+    \end{tabular}
+\end{table*}

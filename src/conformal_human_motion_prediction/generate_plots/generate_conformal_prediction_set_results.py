@@ -13,10 +13,11 @@ Usage::
         --results_dir results/final/conformal_prediction_sets
 """
 import argparse
+import math
 import os
 
 from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
-    METHODS, METHOD_LABELS, bold, read_coverage_by_method,
+    METHODS, METHOD_LABELS, bold, miss_rate, nines_of_reliability, read_coverage_by_method, sci_cell,
 )
 
 DEFAULT_RESULTS_DIR = os.path.join(
@@ -38,26 +39,29 @@ def generate_table(cov):
     lines = [
         r"\begin{table}[h]",
         r"    \centering",
-        r"    \caption{Conformal prediction set test results on H36M. Volume is reported as the "
-        r"5/50/95 percentiles of the per-sphere volume.}",
+        r"    \caption{Conformal prediction set test results on H36M. Coverage is reported as the "
+        r"miss-rate (rate of prediction outside of the predicted set) and the nines of reliability "
+        r"($-\log_{10}$ miss-rate); volume as the 5/50/95 percentiles of the per-sphere volume.}",
         r"    \label{tab:conformal_prediction_set}",
-        r"    \begin{tabular}{lcccc}",
+        r"    \begin{tabular}{lccccc}",
         r"        \toprule",
-        r"        \multirow{2}{*}{\textbf{Method}} & \multirow{2}{*}{$\uparrow$ Coverage (\%)} & "
+        r"        \multirow{2}[3]{*}{\textbf{Method}} & \multicolumn{2}{c}{Coverage} & "
         r"\multicolumn{3}{c}{$\downarrow$ Volume ($m^3$)} \\",
-        r"        \cmidrule(lr){3-5}",
-        r"         & & 5\% & 50\% & 95\% \\",
+        r"        \cmidrule(lr){2-3} \cmidrule(lr){4-6}",
+        r"         & $\downarrow$ Miss-rate & $\uparrow$ 9s of reliability & 5\% & 50\% & 95\% \\",
         r"        \midrule",
     ]
     for m in METHODS:
         if m not in cov:
             continue
         c = cov[m]
-        cov_s = bold(f"{c['coverage_percent']:.4f}", m == best_cov)
+        miss_s = sci_cell(miss_rate(c["coverage_percent"]), m == best_cov, digits=1)
+        k = nines_of_reliability(c["coverage_percent"])
+        nines_s = bold(r"$\infty$" if math.isinf(k) else f"{k:.2f}", m == best_cov)
         v5 = bold(f"{c['volume_p5_m3']:.3f}", m == best_p["p5"])
         v50 = bold(f"{c['volume_p50_m3']:.3f}", m == best_p["p50"])
         v95 = bold(f"{c['volume_p95_m3']:.3f}", m == best_p["p95"])
-        lines.append(f"        {METHOD_LABELS[m]} & {cov_s} & {v5} & {v50} & {v95} \\\\")
+        lines.append(f"        {METHOD_LABELS[m]} & {miss_s} & {nines_s} & {v5} & {v50} & {v95} \\\\")
     lines += [r"        \bottomrule", r"    \end{tabular}", r"\end{table}", ""]
     return "\n".join(lines)
 
