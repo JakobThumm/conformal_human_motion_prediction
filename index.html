@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="description"
+        content="Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees: a certifiable framework for safe HRC from vision inputs with end-to-end uncertainty propagation, conformal prediction sets, and out-of-distribution handling.">
+  <meta name="keywords" content="Safe Human-Robot Collaboration, Conformal Prediction, Human Motion Prediction, Pose Estimation, Uncertainty Quantification, ISO 13849, SARA shield">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <meta property="og:title" content="Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees"/>
+  <meta property="og:description" content="A certifiable framework for safe HRC from vision inputs: end-to-end uncertainty propagation, conformal prediction sets, and OOD handling — reaching ISO 13849-1 performance level d."/>
+  <meta property="og:type" content="website"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+
+  <title>Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees</title>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+        rel="stylesheet">
+
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@creativebulma/bulma-tooltip@1.2.0/dist/bulma-tooltip.min.css">
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+</head>
+<body>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">Vision-Based Safe Human-Robot Collaboration<br>with Uncertainty Guarantees</h1>
+
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">
+              <a href="https://jakob-thumm.com/" target="_blank">Jakob Thumm</a><sup>1</sup>,</span>
+            <span class="author-block">
+              <a href="https://www.lfb.rwth-aachen.de/de/institute/team/frei/" target="_blank">Marian Frei</a><sup>2</sup>,</span>
+            <span class="author-block">
+              Tianle Ni<sup>3</sup>,</span>
+            <span class="author-block">
+              <a href="https://www.ce.cit.tum.de/en/cps/members/prof-dr-ing-matthias-althoff/" target="_blank">Matthias Althoff</a><sup>4</sup>,</span>
+            <span class="author-block">
+              <a href="https://stanfordasl.github.io/team/prof-marco-pavone" target="_blank">Marco Pavone</a><sup>1</sup></span>
+          </div>
+
+          <div class="is-size-5 publication-authors">
+            <span class="author-block"><sup>1</sup>Stanford University,</span>
+            <span class="author-block"><sup>2</sup>RWTH Aachen University,</span>
+            <span class="author-block"><sup>3</sup>Shanghai Jiao Tong University,</span>
+            <span class="author-block"><sup>4</sup>Technical University of Munich</span>
+          </div>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <!-- arXiv PDF -->
+              <span class="link-block">
+                <a href="https://arxiv.org/pdf/2604.15221" target="_blank"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-file-pdf"></i></span>
+                  <span>Paper</span>
+                </a>
+              </span>
+              <!-- arXiv -->
+              <span class="link-block">
+                <a href="https://arxiv.org/abs/2604.15221" target="_blank"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="ai ai-arxiv"></i></span>
+                  <span>arXiv</span>
+                </a>
+              </span>
+              <!-- Video -->
+              <span class="link-block">
+                <a href="https://youtu.be/oeN8RgwpzhE" target="_blank"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fab fa-youtube"></i></span>
+                  <span>Video</span>
+                </a>
+              </span>
+              <!-- Code -->
+              <span class="link-block">
+                <a href="https://github.com/JakobThumm/conformal_human_motion_prediction" target="_blank"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fab fa-github"></i></span>
+                  <span>Code</span>
+                </a>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TEASER VIDEO ===================== -->
+<section class="hero teaser">
+  <div class="container is-max-desktop">
+    <div class="hero-body">
+      <div class="publication-video">
+        <iframe src="https://www.youtube.com/embed/oeN8RgwpzhE?rel=0"
+                frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen></iframe>
+      </div>
+      <h2 class="subtitle has-text-centered">
+        Our certifiable pipeline running on a real Franka Emika robot: it estimates the 3D human pose and
+        its uncertainty from stereo vision, predicts future motion with <b>conformal prediction sets</b>,
+        and stops the robot before a collision can occur — even for out-of-distribution inputs.
+      </h2>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ABSTRACT ===================== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Abstract</h2>
+        <div class="content has-text-justified">
+          <p>
+            Safe human-robot collaboration (HRC) requires accurate human pose estimation and motion
+            prediction to prevent critical collisions. Existing certifiable safe HRC approaches are highly
+            conservative or rely on marker-based motion tracking, while vision-based pose estimators lack
+            the statistical guarantees required for certification in accordance with ISO&nbsp;13849-1.
+          </p>
+          <p>
+            Hence, we propose a pipeline that predicts 3D human motion with <b>end-to-end propagation of the
+            pose estimation uncertainty</b> and over-approximates the prediction error with
+            <b>conformal prediction sets</b>. A gradient-based monitor detects out-of-distribution inputs and
+            replaces them with past predictions to maintain smooth operation. The resulting conformal
+            prediction sets directly integrate into the provably safe HRC approach SARA&nbsp;shield.
+          </p>
+          <p>
+            In experiments on the Human3.6M dataset and a real-world HRC setting, our conformal prediction
+            sets reduce the conservatism of model-based predictions by a factor of <b>8</b>, and our framework
+            achieves a probability of a dangerous failure per hour below <b>10<sup>&minus;6</sup></b> with
+            <b>99.99&nbsp;%</b> confidence — sufficient for certification with performance level&nbsp;d.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== HIGHLIGHT STATS ===================== -->
+<section class="section" style="padding-top: 0;">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column is-3 has-text-centered">
+        <div class="stat-card">
+          <p class="stat-number">8&times;</p>
+          <p class="stat-label">smaller prediction volume than the ISO&nbsp;13855 velocity model</p>
+        </div>
+      </div>
+      <div class="column is-3 has-text-centered">
+        <div class="stat-card">
+          <p class="stat-number">4.1&times;10<sup>&minus;7</sup></p>
+          <p class="stat-label">dangerous failures per hour (PFH<sub>D</sub>) at 99.99&nbsp;% confidence</p>
+        </div>
+      </div>
+      <div class="column is-3 has-text-centered">
+        <div class="stat-card">
+          <p class="stat-number">PL&nbsp;d</p>
+          <p class="stat-label">certifiable performance level under ISO&nbsp;13849-1</p>
+        </div>
+      </div>
+      <div class="column is-3 has-text-centered">
+        <div class="stat-card">
+          <p class="stat-number">&minus;23.8&nbsp;%</p>
+          <p class="stat-label">fewer interruptions in real-world operation via OOD handling</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== METHOD / PIPELINE ===================== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3 has-text-centered">How It Works</h2>
+
+        <div class="content has-text-centered">
+          <img src="./static/images/pipeline_overview.png"
+               alt="Methodological overview of the safe HRC framework"
+               style="max-width: 100%; border-radius: 6px;">
+          <p class="caption">
+            <b>Methodological overview.</b> Our novel contributions are highlighted in blue. From the past
+            2&nbsp;s of stereo images we estimate an uncertainty-aware 3D pose, predict future poses with
+            heteroscedastic covariances, and convert them into conformal prediction sets. Pose and motion
+            monitors detect out-of-distribution inputs. The conformal sets bound the human reachable occupancy,
+            which SARA&nbsp;shield uses to certify the safety of the robot trajectory.
+          </p>
+        </div>
+
+        <div class="columns is-centered">
+          <div class="column">
+            <div class="content">
+              <h3 class="title is-5"><span class="step-num">1</span> Uncertainty-aware 3D pose</h3>
+              <p>
+                A YOLO26 pose network returns per-keypoint 2D means <i>and</i> covariances in both camera
+                frames. Uncertainty-aware triangulation lifts them to a 3D pose with full covariance matrices,
+                giving a calibrated estimate of where each human joint is.
+              </p>
+            </div>
+          </div>
+          <div class="column">
+            <div class="content">
+              <h3 class="title is-5"><span class="step-num">2</span> Uncertainty-aware motion prediction</h3>
+              <p>
+                A DCT-based pose transformer predicts the next 3D poses together with heteroscedastic
+                aleatoric covariances. The input pose uncertainty is embedded and propagated end-to-end, so the
+                predicted covariances reflect both estimation and prediction error.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="columns is-centered">
+          <div class="column">
+            <div class="content">
+              <h3 class="title is-5"><span class="step-num">3</span> Conformal prediction sets</h3>
+              <p>
+                Using split conformal prediction, we calibrate spherical prediction sets that contain the true
+                future joint positions with <b>1&nbsp;&minus;&nbsp;&epsilon;</b> confidence. Spheres and capsules
+                enable fast intersection checks while retaining a finite-sample coverage guarantee.
+              </p>
+            </div>
+          </div>
+          <div class="column">
+            <div class="content">
+              <h3 class="title is-5"><span class="step-num">4</span> Out-of-distribution handling</h3>
+              <p>
+                A sketched-Lanczos uncertainty monitor flags inputs that fall outside the training distribution.
+                Rather than emitting an unreliable prediction, the pipeline reuses past motion predictions,
+                degrading gracefully and resuming once valid observations return.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="columns is-centered">
+          <div class="column is-two-thirds">
+            <div class="content">
+              <h3 class="title is-5"><span class="step-num">5</span> Certifiable safety via SARA shield</h3>
+              <p>
+                The conformal prediction sets bound the human reachable occupancy over the robot's braking
+                horizon. SARA&nbsp;shield verifies each monitored trajectory against this occupancy and executes
+                it only if a collision can be excluded — providing certifiable safety at all times.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== RESULTS ===================== -->
+<section class="section" style="background-color: #f5f9fd;">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Results</h2>
+
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <div class="content">
+          <p class="has-text-centered">
+            We evaluate on the <b>Human3.6M</b> benchmark and a real-world Franka Emika HRC setup, testing three
+            hypotheses: our conformal sets are less conservative than the ISO&nbsp;13855 velocity model at equal
+            coverage (<b>H1</b>); the full system reaches PFH<sub>D</sub>&nbsp;&lt;&nbsp;10<sup>&minus;6</sup>,
+            i.e. PL&nbsp;d (<b>H2</b>); and OOD handling reduces invalid predictions at a small accuracy cost
+            (<b>H3</b>).
+          </p>
+        </div>
+
+        <!-- Table I -->
+        <h3 class="title is-5 has-text-centered">Conformal prediction &amp; certification on Human3.6M</h3>
+        <div class="table-container">
+          <table class="table is-fullwidth is-hoverable results-table">
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Miss-rate&nbsp;&darr;</th>
+                <th>9s of reliability&nbsp;&uarr;</th>
+                <th>Median volume (m<sup>3</sup>)&nbsp;&darr;</th>
+                <th>PFH<sub>D</sub> (1/h)&nbsp;&darr;</th>
+                <th>PL</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>ISO&nbsp;13855</td>
+                <td>8.1&times;10<sup>&minus;4</sup></td>
+                <td>3.09</td>
+                <td>0.687</td>
+                <td>1.49&times;10<sup>&minus;1</sup></td>
+                <td>none</td>
+              </tr>
+              <tr>
+                <td>Ours (with OOD inputs)</td>
+                <td>2.1&times;10<sup>&minus;4</sup></td>
+                <td>3.67</td>
+                <td>0.091</td>
+                <td>6.27&times;10<sup>&minus;7</sup></td>
+                <td>d</td>
+              </tr>
+              <tr class="highlight-row">
+                <td><b>Ours (OOD filtered)</b></td>
+                <td><b>1.6&times;10<sup>&minus;4</sup></b></td>
+                <td><b>3.80</b></td>
+                <td><b>0.088</b></td>
+                <td><b>4.14&times;10<sup>&minus;7</sup></b></td>
+                <td><b>d</b></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="caption has-text-centered">
+          At an equal coverage level, our conformal sets are <b>8&times; smaller in median volume</b> and have a
+          <b>5&times; smaller miss-rate</b> than the ISO&nbsp;13855 constant-velocity model, while achieving a
+          PFH<sub>D</sub> low enough for <b>PL&nbsp;d</b> (H1, H2).
+        </p>
+
+        <br>
+
+        <!-- Table II -->
+        <div class="columns is-centered">
+          <div class="column is-two-thirds">
+            <h3 class="title is-5 has-text-centered">Motion prediction accuracy (MPJPE, mm)</h3>
+            <div class="table-container">
+              <table class="table is-fullwidth is-hoverable results-table">
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th>80&nbsp;ms</th>
+                    <th>160&nbsp;ms</th>
+                    <th>320&nbsp;ms</th>
+                    <th>400&nbsp;ms</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>Repeating Last-Frame</td><td>23.8</td><td>44.4</td><td>76.1</td><td>88.2</td></tr>
+                  <tr><td>HisRep</td><td>10.4</td><td>22.6</td><td>47.1</td><td>58.3</td></tr>
+                  <tr><td>ST-Trans</td><td>10.4</td><td>23.4</td><td>48.4</td><td>59.2</td></tr>
+                  <tr><td>SiMLPe</td><td>9.6</td><td>21.7</td><td>46.3</td><td>57.3</td></tr>
+                  <tr><td>Ours (stage&nbsp;1)</td><td>16.5</td><td>23.1</td><td>48.4</td><td>62.4</td></tr>
+                  <tr><td>Ours (final, w/ uncertainty)</td><td>22.0</td><td>30.7</td><td>56.1</td><td>69.4</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="caption has-text-centered">
+              For safety-critical HRC, high statistical certainty matters more than raw accuracy: our
+              uncertainty-aware model trades a few&nbsp;mm of MPJPE for calibrated, certifiable prediction sets.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== REAL-WORLD DEMO ===================== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3 has-text-centered">Real-World Deployment</h2>
+        <div class="content has-text-justified">
+          <p>
+            We integrated the pipeline into SARA&nbsp;shield and deployed it in a real-world HRC setting on a
+            <b>Franka Emika</b> robot, using an <b>Intel RealSense 435i</b> camera for perception and depth. We
+            mark all 3D poses whose depth differs by more than 0.8&nbsp;m from the median depth as
+            out-of-distribution, so the OOD monitor catches perception failures directly. In every tested
+            instance, the robot came to a complete stop before the human operator could reach it. Our OOD
+            handling reduces interruptions by <b>23.8&nbsp;%</b> compared to naively rejecting every uncertain
+            input, at a cost of only <b>1.9&nbsp;%</b> higher MPJPE (H3).
+          </p>
+        </div>
+        <div class="publication-video">
+          <iframe src="https://www.youtube.com/embed/oeN8RgwpzhE?rel=0"
+                  frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+                  allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BIBTEX ===================== -->
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title is-3">BibTeX</h2>
+    <pre><code>@article{thumm2026vision,
+  title   = {Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees},
+  author  = {Thumm, Jakob and Frei, Marian and Ni, Tianle and Althoff, Matthias and Pavone, Marco},
+  journal = {arXiv preprint arXiv:2604.15221},
+  year    = {2026}
+}</code></pre>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer class="footer">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content has-text-centered">
+          <p>
+            This work was supported by Toyota Motor Engineering &amp; Manufacturing North America,&nbsp;Inc.
+            and Volkswagen Group of America,&nbsp;Inc.
+          </p>
+        </div>
+        <div class="content has-text-centered">
+          <p>
+            Website source is available on
+            <a href="https://github.com/JakobThumm/conformal_human_motion_prediction/tree/gh-pages">GitHub</a>.
+            This page was adapted from the
+            <a href="https://github.com/nerfies/nerfies.github.io">Nerfies</a> project page and is licensed
+            under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons
+            Attribution-ShareAlike 4.0 International License</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="./static/js/index.js"></script>
+</body>
+</html>
