@@ -2684,6 +2684,7 @@ Per-Joint Volume [m^3]:
 ### RGB-D YOLO Results Ellipsoid to Sphere Approach
 
 # Simulate Robot Shield
+
 Settings:
   - OOD Threshold: 1.5E-5
   - Set likelihood: 0.9999 (99.99%)
@@ -2809,17 +2810,17 @@ Our results in~\cref{tab:full_pipeline_results} show that our OOD pipeline reduc
 
 \begin{table*}[t]
     \centering
-    \caption{Motion prediction evaluation and certification simulation on H36M test data. The first columns report the coverage and volume (5/50/95 percentiles of the per-sphere volume) of the predicted sets. The last four columns report the results on $N = \num{2.000e13}$ simulated HRC test cycles, measuring how often SARA shield verified the monitored trajectory as safe ($c_{\text{safe}}$), the number of contacts despite a verified trajectory ($c_{\text{safe}} \land \text{contact}$), and the resulting PL.}
+    \caption{Motion prediction evaluation and certification simulation on H36M test data. The first columns report the miss-rate (rate of prediction outside of the predicted set), the nines of reliability and volume (\num{5}/\num{50}/\num{95} percentiles of the per-sphere volume) of the predicted sets. The last four columns report the results on $N = \num{2e13}$ simulated HRC test cycles, measuring how often SARA shield verified the monitored trajectory as safe ($c_{\text{safe}}$), the number of contacts despite a verified trajectory ($c_{\text{safe}} \land \text{contact}$), and the resulting PL.}
     \label{tab:all_conformal_results}
-    \begin{tabular}{lcccc|cccc}
+    \begin{tabular}{lccccc|cccc}
         \toprule
-        \multirow{2}{*}{\textbf{Method}} & \multirow{2}{*}{$\uparrow$ Coverage (\%)} & \multicolumn{3}{c|}{$\downarrow$ Volume ($m^3$)} & \multirow{2}{*}{$\uparrow$ $c_{\text{safe}}$ (\%)} & \multirow{2}{*}{$\downarrow$ $c_{\text{safe}} \land \text{contact}$} & \multirow{2}{*}{$\downarrow$ PFH$_D$ (1/h)} & \multirow{2}{*}{PL} \\
-        \cmidrule(lr){3-5}
-         & & 5\% & 50\% & 95\% & & & & \\
+        \multirow{2}[3]{*}{\textbf{Method}} & \multicolumn{2}{c}{Coverage} & \multicolumn{3}{c|}{$\downarrow$ Volume ($m^3$)} & \multirow{2}[3]{*}{$\uparrow$ $c_{\text{safe}}$ (\%)} & \multirow{2}[3]{*}{$\downarrow$ $c_{\text{safe}} \land \text{contact}$} & \multirow{2}[3]{*}{$\downarrow$ PFH$_\text{D}$ (1/h)} & \multirow{2}[3]{*}{PL} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-6}
+         & $\downarrow$ Miss-rate & $\uparrow$ 9s of reliability & 5\% & 50\% & 95\% & & & & \\
         \midrule
-        ISO 13855~\cite{iso_2010_SafetyMachinery} without OOD filtered & 99.9193 & 0.017 & 0.687 & 3.252 & 98.91 & 12,206,306 & \num{1.49e-1} & none \\
-        Ours without OOD filtered & 99.9785 & 0.015 & 0.091 & 0.664 & 99.21 & 2 & \num{6.27e-7} & PL d \\
-        Ours with OOD filtered & \textbf{99.9835} & \textbf{0.015} & \textbf{0.088} & \textbf{0.638} & \textbf{99.23} & \textbf{0} & \textbf{\num{4.14e-7}} & \textbf{PL d} \\
+        ISO 13855 & \num{8.1e-4} & 3.09 & 0.017 & 0.687 & 3.252 & 98.91 & \num{1.2e7} & \num{1.49e-1} & none \\
+        Ours with OOD inputs & \num{2.1e-4} & 3.67 & 0.015 & 0.091 & 0.664 & 99.21 & 2 & \num{6.27e-7} & PL d \\
+        Ours OOD filtered & $\mathbf{1.6 \times 10^{-4}}$ & \textbf{3.80} & \textbf{0.015} & \textbf{0.088} & \textbf{0.638} & \textbf{99.23} & \textbf{0} & $\mathbf{4.14 \times 10^{-7}}$ & \textbf{PL d} \\
         \bottomrule
     \end{tabular}
 \end{table*}

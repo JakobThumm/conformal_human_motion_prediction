@@ -355,7 +355,7 @@
       "args": [
           "--data_path", "datasets/",
           "--dataset_name", "Human36mMotionDataset3DWithInputUncertainty",
-          "--split", "test",
+          "--split", "validation",
           "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
           "--enable_ood",
           "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"

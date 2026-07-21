@@ -228,19 +228,100 @@ Notes:
   the previous), or `--load_score_functions` to skip the whole build. Reduce `--test_batch_size` if
   you hit GPU-memory limits.
 
+### 2.4 Calibrate the conformal prediction sets
+
+The conditional-conformal calibrator
+(`models/motion_prediction/conformal_calibration/conformal_calibrator.npz`) turns the model's raw
+covariances into the deployed prediction sets. It is fit on the **validation** split in two steps.
+
+**Step 1 — evaluate motion prediction on the validation split** (with OOD, so the per-sample score
+is measured) to produce the cloudpickle the calibrator reads. VSCode launch config
+*"Motion Prediction Evaluation"*:
+
+```jsonc
+{
+  "name": "Motion Prediction Evaluation",
+  "type": "debugpy",
+  "request": "launch",
+  "program": "src/conformal_human_motion_prediction/examples/motion_prediction.py",
+  "console": "integratedTerminal",
+  "args": [
+    "--data_path", "datasets/",
+    "--dataset_name", "Human36mMotionDataset3DWithInputUncertainty",
+    "--split", "validation",
+    "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
+    "--enable_ood",
+    "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"
+  ]
+}
+```
+
+Equivalently on the CLI:
+
+```bash
+python -m conformal_human_motion_prediction.examples.motion_prediction \
+    --data_path datasets/ --dataset_name Human36mMotionDataset3DWithInputUncertainty \
+    --split validation \
+    --model_save_path models/motion_prediction/final_model/dct_pose_transformer.pickle \
+    --enable_ood --motion_score_fn_path models/ood_functions/dct_pose_transformer_score_fn.cloudpickle
+```
+
+**Step 2 — fit the calibrator** (tune the target confidence here). VSCode launch config
+*"Conformal Calibration (tune confidence)"*:
+
+```jsonc
+{
+  "name": "Conformal Calibration (tune confidence)",
+  "type": "debugpy",
+  "request": "launch",
+  "program": "src/conformal_human_motion_prediction/motion_prediction/conformal_calibration.py",
+  "console": "integratedTerminal",
+  "env": {
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+    "JAX_PLATFORMS": "cpu"  // pure numpy/scipy; keep off the shared GPU
+  },
+  "args": [
+    // Tuning phase: split validation 50/50 (calib/test) so coverage is reported honestly.
+    // Final step: drop --calib_frac and pass --calib_file <S11> --test_file <S5> instead.
+    "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
+    "--calib_frac", "0.5",
+    // >>> Play with the target confidence here (overrides SET_LIKELIHOOD). <<<
+    "--likelihood", "0.9999"
+    // Other knobs you can add: --n_bins 8  --tail_edges 0.3 0.5 0.75  --n_min 200
+    //                         --base raw|affine  --no-monotone  --seed 0
+  ]
+}
+```
+
+Equivalently on the CLI:
+
+```bash
+XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_PLATFORMS=cpu \
+  python -m conformal_human_motion_prediction.motion_prediction.conformal_calibration \
+    --results_file results/motion_prediction/motion_prediction_results_validation.cloudpickle \
+    --calib_frac 0.5 --likelihood 0.9999
+```
+
 ## 3. Results
 
 ### 3.1 Paper results (`final_results/`)
 
-The headline tables in the paper are produced by the three scripts in `final_results/`. Each runs
-the relevant evaluation over the H36M **test** split, then builds a LaTeX table from the saved CSVs
-(via `generate_plots/`). Run them once the models and OOD score functions are in place (§2):
+The headline tables in the paper are produced by the scripts in `final_results/`. Each runs the
+relevant evaluation over the H36M **test** split, then builds a LaTeX table from the saved CSVs
+(via `generate_plots/`). Run them once the models and OOD score functions are in place (§2), and
+after fitting the calibrator (§2.4):
 
 ```bash
-bash final_results/motion_prediction_no_uncertainty_no_ood_results.sh    # motion benchmark
-bash final_results/motion_prediction_conformal_prediction_set_results.sh # conformal prediction sets
-bash final_results/full_pipeline_ood_handling_evaluation.sh              # full pipeline (sweeps N_req)
+bash final_results/motion_prediction_no_uncertainty_no_ood_results.sh     # motion benchmark (MPJPE)
+bash final_results/motion_prediction_conformal_prediction_set_results.sh  # conformal prediction sets (coverage/volume)
+bash final_results/robot_shield_safety_results.sh                         # robot-shield certification (c_safe, PFH_D, PL)
+bash final_results/full_pipeline_ood_handling_evaluation.sh               # full pipeline (sweeps N_req)
+bash final_results/create_full_conformal_prediction_results_table.sh      # combine conformal + shield -> final table
 ```
+
+The conformal prediction-set and robot-shield scripts each cover all three methods (ISO 13855,
+ours with OOD inputs, ours with OOD filtering); the last script fuses their CSVs into the combined
+`tab:all_conformal_results`. Each script also writes its paper-ready `.tex` under `results/final/`.
 
 **Motion prediction test results** (`motion_prediction_no_uncertainty_no_ood_results.sh`) — MPJPE
 [mm] from ground-truth pose inputs; reports the stage-1 and final models:
@@ -251,21 +332,52 @@ bash final_results/full_pipeline_ood_handling_evaluation.sh              # full 
 | Ours (final)   | 18.4 | 28.1 | 53.1 | 67.2 |
 
 **Conformal prediction set test results** (`motion_prediction_conformal_prediction_set_results.sh`) —
-predicted pose inputs with input uncertainty:
+predicted pose inputs with input uncertainty; a single test-set evaluation yields all three methods.
+Volume is the 5/50/95 percentiles of the per-sphere volume (robust to the heavy OOD tail):
 
-| Method | ↑ Coverage (%) | ↓ Volume (m³) |
-|--------|----------------|----------------|
-| ISO 13855:2010 | 97.93 | 0.191 |
-| Conformal prediction sets (ours) | **98.25** | **0.017** |
+| Method | ↑ Coverage (%) | ↓ Vol 5% (m³) | ↓ 50% | ↓ 95% |
+|--------|----------------|---------------|-------|-------|
+| ISO 13855 (no OOD filter) | 99.9193 | 0.017 | 0.687 | 3.252 |
+| Ours (no OOD filter)      | 99.9785 | 0.015 | 0.091 | 0.664 |
+| Ours (OOD filtered)       | **99.9835** | **0.015** | **0.088** | **0.638** |
+
+**Robot-shield certification** (`robot_shield_safety_results.sh`) — three shield runs at
+$N \approx \num{2e13}$ simulated HRC test cycles ($t_\text{cycle}=4$ ms); `c_safe` is the verified
+rate, `c_safe ∧ contact` the dangerous failures, PFH_D the one-sided Clopper-Pearson (99.99%) upper
+bound. See §3.4 for the workflow:
+
+| Method | ↑ c_safe (%) | ↓ c_safe ∧ contact | ↓ PFH_D (1/h) | PL |
+|--------|--------------|--------------------|---------------|-----|
+| ISO 13855 (no OOD filter) | 98.91 | 12,206,306 | 1.49e-1 | none |
+| Ours (no OOD filter)      | 99.21 | 2 | 6.27e-7 | PL d |
+| Ours (OOD filtered)       | **99.23** | **0** | **4.14e-7** | **PL d** |
 
 **Full pipeline evaluation** (`full_pipeline_ood_handling_evaluation.sh`) — sweeps `N_req`, the number
-of correct poses required before triggering motion prediction (the script also runs `N_req=5`):
+of correct poses required before triggering motion prediction:
 
 | N_req | ↓ ℋ invalid (%) | ↑ Motion valid (%) | ↓ MPJPE (mm) |
 |-------|------------------|---------------------|---------------|
-| 3 (ours) | **9.45** | **85.48** | 53.56 |
-| 10 | 11.72 | 82.10 | 53.13 |
-| 50 | 14.75 | 75.29 | **52.22** |
+| 3 (ours) | **12.63** | **74.74** | 55.15 |
+| 5 | 13.52 | 73.62 | 55.03 |
+| 10 | 14.05 | 72.67 | 54.74 |
+| 50 | 16.57 | 68.70 | **54.14** |
+
+> Our OOD pipeline reduces the rate of invalid pose buffers
+> $\sum_{i=K_I - N_\text{req}+1}^{K_I} v_i < N_\text{req}$ by 23.8 % while only increasing the average
+> MPJPE by 1.9 %.
+
+**Combined final results table** (`create_full_conformal_prediction_results_table.sh`,
+`tab:all_conformal_results`) — coverage reported as miss-rate ($1-p_\text{cov}$) and nines of
+reliability ($-\log_{10}$ miss-rate):
+
+| Method | ↓ Miss-rate | ↑ 9s of rel. | Vol 5% | 50% | 95% | ↑ c_safe (%) | ↓ ∧ contact | ↓ PFH_D (1/h) | PL |
+|--------|-------------|--------------|--------|-----|-----|--------------|-------------|---------------|-----|
+| ISO 13855            | 8.1e-4 | 3.09 | 0.017 | 0.687 | 3.252 | 98.91 | 1.2e7 | 1.49e-1 | none |
+| Ours with OOD inputs | 2.1e-4 | 3.67 | 0.015 | 0.091 | 0.664 | 99.21 | 2 | 6.27e-7 | PL d |
+| Ours OOD filtered    | **1.6e-4** | **3.80** | **0.015** | **0.088** | **0.638** | **99.23** | **0** | **4.14e-7** | **PL d** |
+
+The paper-ready LaTeX for every table above is written under `results/final/` (e.g.
+`results/final/all_conformal_results.tex`).
 
 ### 3.2 Per-stage sanity checks
 
@@ -345,7 +457,44 @@ The full chain, one step per artifact:
    row (headline rates + PFH_D / PL per confidence) per run. Turn the CSV into a LaTeX table with
    `generate_plots.generate_robot_shield_results`.
 
-Steps 2–5 (plus the LaTeX table, and a sweep over set likelihoods) are scripted in
+VSCode launch config *"Simulate Robot Shield"* (settings: OOD threshold `1.5E-5`, set likelihood
+`0.9999`):
+
+```jsonc
+{
+  "name": "Simulate Robot Shield",
+  "type": "debugpy",
+  "request": "launch",
+  "program": "src/conformal_human_motion_prediction/examples/simulate_robot_shield.py",
+  "console": "integratedTerminal",
+  "env": {
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+    // Do NOT set JAX_PLATFORMS here: the script auto-keeps the GPU for "--backend gpu" and
+    // forces JAX onto the CPU otherwise. (Add "JAX_PLATFORMS": "cpu" only to pin everything,
+    // incl. the kernel, to the CPU backend.)
+  },
+  "args": [
+    // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
+    "--results_file", "results/motion_prediction/motion_prediction_results_test.cloudpickle",
+    "--num_robot_poses", "1000000",   // production: ~1E6 (needed for PL_C); the GPU path culls ~85% for free.
+    "--pose_radius", "10.0",       // production: 10.0 (far poses then cull at level 1 on the CPU).
+    "--pose_z_offset", "0.2",
+    "--seed", "0",
+    "--mask_ood",
+    "--backend", "gpu",  // Run verification of heavy intersection poses on GPU.
+    "--gpu_dtype", "float32",
+    "--gpu_a_chunk", "512",
+    "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200"
+  ]
+}
+```
+
+For the paper table set a target cycle count with `--n_test_cycles 2e13` (the script derives
+`--num_robot_poses`) and select the human occupancy model with `--human_set {conformal,sara}`
+(`sara` = the ISO 13855 constant-velocity reachable set); the three rows differ by `--human_set`
+and `--mask_ood`.
+
+Steps 2–5 (plus the LaTeX table for all three methods) are scripted in
 [`final_results/robot_shield_safety_results.sh`](final_results/robot_shield_safety_results.sh)
 (prerequisites: step 1 + the motion OOD score function). The shield runs the fine-phase
 intersection checks on the GPU (`--backend gpu`); levels 1–3 of the bounding-sphere culling stay on
