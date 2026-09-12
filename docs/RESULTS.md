@@ -744,6 +744,139 @@ Per-Joint Volume [m^3]:
     Joint 12: 0.6650
 Saved SARA coverage results to results/motion_prediction/coverage_stats_sara.csv
 
+## OOD Detection (ID vs OOD, sketched Lanczos)
+
+Motion-prediction OOD detection, comparing **readout heads** — the reduction applied to the model's
+390-dim future-motion output before the sketched-Lanczos score is computed. The motivation was a
+review comment that the deployed head (head + both wrists at a single horizon timestep, 9 of 390
+dims) is arbitrary and blind to the remaining 381 dimensions.
+
+All arms share the frozen `final_model` weights (verified byte-identical leaf by leaf), identical OOD
+hyperparameters (`--sketch srft --sketch_size 10000 --lanczos_lm_iter 800 --subsample_trainset 10000`)
+and an identical evaluation set (`--max_samples 10000 --seed 0`; the matching MPJPE columns confirm
+the pairing). ID = H36M validation (S11), OOD = the same windows with the 50 input frames randomly
+permuted in time. Reproduce with `examples/id_vs_ood_motion_prediction.py`.
+
+| readout head | dim | AUROC | 95 % CI | AUPRC | ID score (mean ± std) | OOD score (mean ± std) |
+|---|---|---|---|---|---|---|
+| **`randproj` — SHIPPED default** (`DCTPoseTransformerRandomProjection`) | 8 | **0.98576** | [0.98467, 0.98680] | 0.98631 | −0.0575 ± 0.232 | 1.783 ± 2.23 |
+| `random8` — a second random draw | 8 | 0.98252 | [0.98127, 0.98371] | 0.98344 | −0.0086 ± 0.154 | 1.811 ± 2.68 |
+| `reduced9` — hand-picked slice (retained option) | 9 | 0.98154 | [0.98015, 0.98282] | 0.98158 | 9.10e4 ± 1.59e5 | 1.11e6 ± 2.53e6 |
+| `pca8` — fixed linear, PCA of GT futures | 8 | 0.96268 | [0.96056, 0.96471] | 0.96225 | 0.832 ± 2.49 | 12.01 ± 45.5 |
+| `vae8` — learned beta-VAE encoder | 8 | 0.93421 | [0.93116, 0.93708] | 0.93824 | 5.235 ± 10.5 | 83.66 ± 214 |
+| `vae8w` — `vae8` + latent whitening | 8 | 0.89335 | [0.88919, 0.89706] | 0.89587 | 74.10 ± 138 | 1276 ± 3691 |
+
+MPJPE is identical for every arm (ID 32.62 mm, OOD 211.97 mm) — predictions come from the unmodified
+full model; only the OOD score differs.
+
+**What shipped.** The random projection became the default head,
+`DCTPoseTransformerRandomProjection` (`final_model_for_ood/`, score fn
+`dct_pose_transformer_randproj_score_fn.cloudpickle`); `reduced9` is retained as the option
+`DCTPoseTransformerReducedOutput` (`final_model_for_ood_fixed_joints/`). `pca8`, `vae8` and `vae8w`
+were exploratory and their code is **not** retained in the tree — this section is the record of why.
+
+**Two independent projection draws, both ≥ the baseline.** `randproj` (shipped;
+`flax.linen.initializers.orthogonal()` seeded by `OOD_PROJECTION_SEED`) and `random8` (an earlier
+QR-of-Gaussian draw) are different matrices. Against `reduced9` under the same paired bootstrap:
+
+| projection draw | ΔAUROC vs `reduced9` | 95 % CI | significant |
+|---|---|---|---|
+| `randproj` (shipped) | **+0.00422** | [+0.00366, +0.00483] | yes |
+| `random8` | +0.00098 | [+0.00038, +0.00158] | yes |
+
+So the choice of draw moves AUROC by a few thousandths and neither draw loses — the result is not a
+lucky projection. The shipped draw is the better of the two, which is why the improvement over the
+hand-picked slice (+0.0042) is larger than the +0.001 originally measured.
+
+**Every pairwise difference is significant** under a paired bootstrap (2000 resamples over the shared
+sample indices, `results/motion_ood_head_diagnostics/{auroc_bootstrap,shipped_head_auroc}.json`).
+Historic reference: AUROC 0.98113 / AUPRC 0.98193 for `reduced9`, measured
+before `--seed` existed on an *unseeded* 4000-sample subsample; the table's 0.98154 is the
+seed-paired re-run.
+
+### Conclusion: a random dense projection, not a learned one
+
+Replacing the hand-picked slice with a *learned* summary of the whole output **hurts**: a VAE encoder
+costs 4.7 AUROC points and whitening a further 4.1; a variance-optimal linear (PCA) head costs 1.9.
+All lose significantly, so this is not a tuning artifact.
+
+Replacing it with a *fixed random orthonormal projection* over all 390 output coordinates helps
+slightly (+0.0042) and, more importantly, removes an arbitrary design choice: no output dimension is
+excluded by construction and none is privileged. That is now the **default** head; the 9-coordinate
+slice is retained as an option.
+
+### Why — readout-head geometry
+
+Measured on 100 ID + 100 OOD validation samples with a one-off diagnostic (not retained in the
+tree).
+"Subspace efficiency" is the fraction of the best reachable `dim`-dimensional curvature energy the
+head's row space captures: `trace(Ã G Gᵀ Ãᵀ) / Σ_{i≤dim} λ_i(G Gᵀ)` with `G = ∂y_rel/∂params` and `Ã`
+the orthonormalised rows of `A = ∂head/∂y_rel`.
+
+| head | dim | subspace efficiency | AUROC(‖J‖²_F) | final AUROC |
+|---|---|---|---|---|
+| `reduced9` | 9 | 0.009 | 0.242 | 0.98154 |
+| `random8` | 8 | 0.065 | 0.303 | 0.98252 |
+| `pca8` | 8 | 0.021 | 0.605 | 0.96268 |
+| `vae8` | 8 | 0.051 | 0.742 | 0.93421 |
+| `vae8w` | 8 | 0.051 | 0.731 | 0.89335 |
+| `full390` (ceiling) | 390 | 1.000 | 0.333 | — |
+
+Four findings, in order of how much they change how one should think about this score:
+
+1. **The review comment is geometrically right but empirically irrelevant.** The 9-dim slice really
+   does reach under **1 %** of the curvature energy its own dimensionality allows. But subspace
+   efficiency does not predict detection: `vae8` has 5.7× the efficiency of `reduced9` and scores 4.7
+   points *worse*. Capturing more of the output's curvature is simply not the same thing as detecting
+   distribution shift.
+2. **The separation lives in the projection residual, not the gradient norm.** For `reduced9`,
+   `‖J‖²_F` is 9.47e8 mm² (ID) vs 9.13e8 (OOD) — indistinguishable, AUROC 0.242 — while the residual
+   after projecting onto the top-720 GGN subspace goes 0.95 % → 12.19 %. That ratio *is* the detector.
+   Note that `pca8` has a strong raw-energy response (ID 1361 vs OOD 6310, AUROC 0.605) and still
+   detects worse: the ID-fitted GGN subspace absorbs that energy for OOD inputs too.
+3. **Reconstruction- and variance-optimal readouts select against the informative directions.** PCA
+   and the VAE spend their 8 dimensions on the dominant, well-modelled motion modes — exactly the
+   directions the GGN subspace already covers — so little *differential* residual survives. A random
+   isotropic projection retains more (and has 3× PCA's subspace efficiency, 0.065 vs 0.021: the
+   top data-variance directions are not the high-curvature ones).
+4. **A nonlinear head additionally breaks the fixed-readout assumption.** Sketched Lanczos builds one
+   low-rank subspace by averaging over training samples, which presumes a constant `A`. The VAE's
+   `A(x)` is input-dependent, and `AUROC(‖A(x)‖_F) = 0.745` alone — essentially all of `vae8`'s raw
+   energy separation (0.742) is its own local gain, which is multiplicative and cancels in the
+   residual. `A(x)` is *not* rank-deficient (effective rank 8/8, σ₁/σ₈ = 4.4), so collapse is not the
+   cause.
+
+### VAE training (for the record; code not retained)
+
+beta-VAE on ground-truth offset-relative futures from `Human36mMotionDataset3DAugmented`, latent dim 8,
+encoder 390→256→128→8, decoder mirrored, 40 epochs, AdamW 1e-3. A latent dimension counts as active
+when its KL exceeds 0.02 nats.
+
+| beta | test MSE | recon MPJPE | active latents |
+|---|---|---|---|
+| 1e-4 | 0.000583 | **26.54 mm** | **8 / 8** |
+| 1e-3 | 0.001872 | 44.46 mm | 2 / 8 |
+| 1e-2 | 0.002429 | 50.18 mm | 0 / 8 |
+
+beta=1e-4 was used for `vae8`. The encoder is a strong autoencoder in its own right — 26.5 mm
+reconstruction from 8 numbers, below the motion model's own 32.6 mm prediction error — so the OOD
+result is not caused by a weak encoder. That is the main reason not to retry this without a new
+mechanism: the reduction is good, the *objective* is the wrong one for OOD detection.
+
+### Caveats
+
+- Score magnitudes are **not** comparable across heads. `reduced9` works in millimetres (scores ~1e5);
+  the latent heads work in metres (scores ~1e0). AUROC is rank-based and unaffected, but
+  `OOD_THRESHOLD = 3E5` in `motion_prediction/h36m_settings.py` is calibrated for `reduced9` only.
+- `random8`/`pca8` ID scores can be slightly **negative** (`random8` mean −0.0086). `‖proj‖² > ‖J‖²` is
+  impossible for a true projection; this is float32 cancellation, since for those heads the residual is
+  ~0.015 % of the total (vs 0.95 % for `reduced9`). Harmless for ranking, but a positive-threshold
+  assumption would be wrong.
+- The GGN is computed on the *augmented* train split while evaluation uses the *unaugmented* validation
+  split. Pre-existing and shared by all arms.
+- The `ReducedOutput*` dataset dispatch does not forward `max_target_speed`, so these datasets apply the
+  2.0 m/s filter that the model's own training disabled. Pre-existing and shared by all arms.
+
 ## Full Evaluation Pipeline
 
 ### Action = Directions, 1 Sequence

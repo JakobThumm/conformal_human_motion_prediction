@@ -84,7 +84,7 @@ def main():
     parser.add_argument('--pose_model_path', type=str, default='models/pose_estimation/jax_resnet50_regressflow', help='Direct path to the pose model checkpoint base')
     parser.add_argument('--pose_score_fn_path', type=str, default='models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle', help='Direct path to the pose OOD score functions (.cloudpickle)')
     parser.add_argument('--motion_model_save_path', type=str, default='models/motion_prediction/final_model/dct_pose_transformer.pickle', help='Path to saved motion model')
-    parser.add_argument('--motion_score_fn_path', type=str, default='models/ood_functions/dct_pose_transformer_score_fn.cloudpickle', help="Path to the OOD score function for the motion prediction.")
+    parser.add_argument('--motion_score_fn_path', type=str, default='models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle', help="Path to the OOD score function for the motion prediction.")
     parser.add_argument('--conformal_calibrator', type=str, default='models/motion_prediction/conformal_calibration/conformal_calibrator.npz', help="Path to the conditional-conformal calibrator .npz. Falls back to affine calibration if the file is absent.")
     parser.add_argument('--subsample', type=int, default=2, help='Subsampling of frames to match training camera frequency. 1 = no subsampling.')
     parser.add_argument('--split', type=str, default='validation', help='train, validation, or test')

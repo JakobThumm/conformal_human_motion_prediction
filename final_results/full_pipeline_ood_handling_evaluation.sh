@@ -1,12 +1,17 @@
 #!/bin/bash
 # Table: Full pipeline evaluation results on H36M (H invalid %, Motion valid %, MPJPE mm)
 # for several values of N_req (number of correct poses required before motion prediction).
+#
+# NOTE: $SCORE_FN and OOD_THRESHOLD in motion_prediction/h36m_settings.py are head-specific and
+# must match. The default score function is the random-projection head (scores in metres, ID mean
+# ~0); the legacy fixed-joints head scores in millimetres (ID mean ~9e4). Re-tune OOD_THRESHOLD
+# after changing heads, otherwise OOD masking silently never fires.
 set -e
 
 POSE_MODEL="models/pose_estimation/jax_resnet50_regressflow"
 POSE_SCORE_FN="models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle"
 MOTION_MODEL="models/motion_prediction/final_model/dct_pose_transformer.pickle"
-MOTION_SCORE_FN="models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"
+MOTION_SCORE_FN="models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle"
 
 for N in 3 5 10 50; do
     python -m conformal_human_motion_prediction.examples.eval_full_pipeline \

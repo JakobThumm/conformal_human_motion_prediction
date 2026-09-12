@@ -358,7 +358,7 @@
           "--split", "validation",
           "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
           "--enable_ood",
-          "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"
+          "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle"
       ]
     },
     {
@@ -371,7 +371,7 @@
         "--pose_model_path", "models/pose_estimation/jax_resnet50_regressflow",
         "--pose_score_fn_path", "models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle",
         "--motion_model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
-        "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle",
+        "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle",
         "--split", "validation",
         // "--action", "Directions",
         "--max_sequences", "2",
@@ -388,7 +388,7 @@
       "args": [
         "--motion_model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
         "--enable_ood",
-        "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle",
+        "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle",
         "--enable_tracking",
         "--depth_uncertainty", "0.05",
         "--start_at", "1656",
@@ -510,7 +510,7 @@
       ]
     },
     {
-      "name": "Score DCTPoseTransformer H36M Reduced Output OOD",
+      "name": "Score DCTPoseTransformer Motion OOD (random projection, default)",
       "type": "debugpy",
       "request": "launch",
       "program": "src/conformal_human_motion_prediction/ood_scoring/score_model.py",
@@ -520,9 +520,10 @@
           "--OOD_datasets", "Human36mMotionReducedOutputOODDataset3D",
           "--data_path", "datasets/",
           "--model_save_path", "models/motion_prediction/final_model_for_ood/",
-          "--model", "DCTPoseTransformerReducedOutput",
+          "--model", "DCTPoseTransformerRandomProjection",
           "--run_name", "dct_pose_transformer",
-          "--output_dim", "9",
+          "--output_dim", "8",
+          "--score_fn_output_path", "models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle",
           "--subsample_trainset", "10000",
           "--subsample_testset", "640",
           "--lanczos_hm_iter", "0",
@@ -542,14 +543,40 @@
       ]
     },
     {
+      "name": "Score DCTPoseTransformer Motion OOD (fixed joints, legacy option)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "src/conformal_human_motion_prediction/ood_scoring/score_model.py",
+      "console": "integratedTerminal",
+      "args": [
+          "--ID_dataset", "Human36mMotionReducedOutputDataset3DAugmented",
+          "--OOD_datasets", "Human36mMotionReducedOutputOODDataset3D",
+          "--data_path", "datasets/",
+          "--model_save_path", "models/motion_prediction/final_model_for_ood_fixed_joints/",
+          "--model", "DCTPoseTransformerReducedOutput",
+          "--run_name", "dct_pose_transformer",
+          "--output_dim", "9",
+          "--score_fn_output_path", "models/ood_functions/dct_pose_transformer_fixed_joints_score_fn.cloudpickle",
+          "--subsample_trainset", "10000",
+          "--lanczos_hm_iter", "0",
+          "--lanczos_lm_iter", "800",
+          "--test_batch_size", "128",
+          "--train_batch_size", "128",
+          "--serialize_ggn_on_batches",
+          "--sketch", "srft",
+          "--sketch_size", "10000"
+      ]
+    },
+    {
       "name": "Motion Prediction ID vs. OOD",
       "type": "debugpy",
       "request": "launch",
       "program": "src/conformal_human_motion_prediction/examples/id_vs_ood_motion_prediction.py",
       "console": "integratedTerminal",
       "args": [
-        "--score_fn", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle",
-        "--max_samples", "4000",
+        "--score_fn", "models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle",
+        "--max_samples", "10000",
+        "--seed", "0",
         "--output_dir", "results/motion_prediction_ood"
       ]
     },

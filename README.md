@@ -188,10 +188,32 @@ whose cost scales with the model's **output dimension**. To keep it tractable, O
   python -m conformal_human_motion_prediction.pose_estimation.reduce_regressflow_model \
       --run_name jax_resnet18_regressflow --output_run_name jax_resnet18_regressflow_3joints --seed 420
   ```
-- **Motion** (`DCTPoseTransformerReducedOutput`): **same weights**, output sliced to timestep
-  `REDUCED_TIMESTEP=4` and joints `REDUCED_JOINT_INDICES=[0,5,6]` (head + both hands), i.e. output dim
-  1560 → 9. `scripts/build_motion_models.py` produces this as `final_model_for_ood/` (identical
-  `*.pickle` weights + an `args.json` selecting `DCTPoseTransformerReducedOutput`).
+- **Motion**: **same weights**, reduced *output*. Two readout heads are available, both built by
+  `scripts/build_motion_models.py`:
+  - **`DCTPoseTransformerRandomProjection` — the default.** A fixed random orthonormal projection of
+    the whole 390-dim future motion onto `OOD_PROJECTION_DIM=8` directions, i.e.
+    `z = ((pred - offset)/1000).reshape(390) @ Q` with `Q` having orthonormal columns. Every output
+    coordinate enters the readout with non-zero weight and, in expectation, each contributes equally.
+    `Q` is drawn once from `OOD_PROJECTION_SEED` and stored in the pickle under
+    `random_projection/kernel`; it is stop-gradient-frozen, so it never enters the GGN. Written to
+    `final_model_for_ood/`.
+  - **`DCTPoseTransformerReducedOutput` — the legacy option.** Output sliced to timestep
+    `REDUCED_TIMESTEP=4` and joints `REDUCED_JOINT_INDICES=[0,5,6]` (head + both wrists), i.e. 9 of
+    390 coordinates. Needs no head parameters at all. Written to
+    `final_model_for_ood_fixed_joints/`.
+
+  Measured AUROC on the time-shuffled H36M OOD benchmark (10 000 samples, seed 0): projection
+  **0.9858**, fixed joints 0.9815 (paired bootstrap ΔAUROC +0.0042, CI [+0.0037, +0.0048]). The
+  projection is the default because it removes an arbitrary design choice — and it detects slightly
+  better. The full comparison, including a learned VAE head that turned out **worse** by 4.7 AUROC
+  points, is in [`docs/RESULTS.md`](docs/RESULTS.md) § OOD Detection.
+
+  > **OOD scores are not comparable across heads.** The projection scores in metres (ID mean −0.06,
+  > OOD mean +1.78) and is legitimately negative on ID data; the fixed-joints head scores in
+  > millimetres (ID mean ≈ 9e4). `OOD_THRESHOLD` in `motion_prediction/h36m_settings.py` is
+  > head-specific and **must be re-tuned when switching heads** — left unchanged it silently never
+  > fires. Measured ID percentiles for the projection: p99 +0.336, p99.9 +0.575. Only rank-based
+  > metrics (AUROC/AUPRC) transfer between heads.
 
 **Build the score function.** `score_model` computes the GGN, sketches it, runs Lanczos, and saves a
 single (small) score-function file. Pose OOD (ID = H36M, OOD = tiger-pose):
@@ -207,19 +229,26 @@ python -m conformal_human_motion_prediction.ood_scoring.score_model \
     --score_fn_output_path models/ood_functions/pose_score_fn.cloudpickle
 ```
 
-Motion OOD (ID = augmented reduced H36M motion, OOD = the reduced OOD motion set):
+Motion OOD (ID = augmented reduced H36M motion, OOD = the reduced OOD motion set) — the default
+random-projection head:
 
 ```bash
 python -m conformal_human_motion_prediction.ood_scoring.score_model \
     --ID_dataset Human36mMotionReducedOutputDataset3DAugmented \
     --OOD_datasets Human36mMotionReducedOutputOODDataset3D --data_path datasets/ \
-    --model_save_path models/motion_prediction/final_model_for_ood --model DCTPoseTransformerReducedOutput \
-    --run_name dct_pose_transformer --output_dim 9 \
+    --model_save_path models/motion_prediction/final_model_for_ood \
+    --model DCTPoseTransformerRandomProjection \
+    --run_name dct_pose_transformer --output_dim 8 \
     --subsample_trainset 10000 --lanczos_hm_iter 0 --lanczos_lm_iter 800 \
     --test_batch_size 128 --train_batch_size 128 --serialize_ggn_on_batches \
     --sketch srft --sketch_size 10000 --cache_dir cache/ \
-    --score_fn_output_path models/ood_functions/motion_score_fn.cloudpickle
+    --score_fn_output_path models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle
 ```
+
+For the legacy fixed-joints head, point `--model_save_path` at
+`models/motion_prediction/final_model_for_ood_fixed_joints`, and use
+`--model DCTPoseTransformerReducedOutput --output_dim 9` and
+`--score_fn_output_path models/ood_functions/dct_pose_transformer_fixed_joints_score_fn.cloudpickle`.
 
 Notes:
 - `--sketch_size` and `--lanczos_lm_iter` are the key paper hyperparameters.
@@ -227,6 +256,20 @@ Notes:
   reload them with `--load_ggn_vector_product` / `--load_sketch_op` / `--load_eigenpairs` (each needs
   the previous), or `--load_score_functions` to skip the whole build. Reduce `--test_batch_size` if
   you hit GPU-memory limits.
+
+**Comparing readout heads.** `examples/id_vs_ood_motion_prediction.py` scores the H36M validation
+split against its time-shuffled counterpart and reports AUROC/AUPRC. Pass the same `--max_samples`
+and `--seed` for every head so they are compared on identical samples (the seed pins both the
+subsample and the OOD time-shuffle):
+
+```bash
+python -m conformal_human_motion_prediction.examples.id_vs_ood_motion_prediction \
+    --score_fn models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle \
+    --max_samples 10000 --seed 0 --output_dir results/motion_prediction_ood_randproj
+```
+
+Recorded numbers, and why a learned (VAE) head was tried and rejected, are in
+[`docs/RESULTS.md`](docs/RESULTS.md) § OOD Detection.
 
 ### 2.4 Calibrate the conformal prediction sets
 
@@ -251,7 +294,7 @@ is measured) to produce the cloudpickle the calibrator reads. VSCode launch conf
     "--split", "validation",
     "--model_save_path", "models/motion_prediction/final_model/dct_pose_transformer.pickle",
     "--enable_ood",
-    "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_score_fn.cloudpickle"
+    "--motion_score_fn_path", "models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle"
   ]
 }
 ```
@@ -263,7 +306,7 @@ python -m conformal_human_motion_prediction.examples.motion_prediction \
     --data_path datasets/ --dataset_name Human36mMotionDataset3DWithInputUncertainty \
     --split validation \
     --model_save_path models/motion_prediction/final_model/dct_pose_transformer.pickle \
-    --enable_ood --motion_score_fn_path models/ood_functions/dct_pose_transformer_score_fn.cloudpickle
+    --enable_ood --motion_score_fn_path models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle
 ```
 
 **Step 2 — fit the calibrator** (tune the target confidence here). VSCode launch config

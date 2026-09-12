@@ -88,7 +88,7 @@ def main():
                         help="YOLO model name (e.g., yolo11n-pose.pt, yolo26n-pose.pt)")
     parser.add_argument('--motion_model_save_path', type=str, default='models/motion_prediction/final_model/dct_pose_transformer.pickle', help='Path to saved motion model')
     parser.add_argument('--pose_score_fn_path', type=str, default='models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle', help='Direct path to the pose OOD score functions (.cloudpickle)')
-    parser.add_argument('--motion_score_fn_path', type=str, default='models/ood_functions/dct_pose_transformer_score_fn.cloudpickle', help="Path to the OOD score function for the motion prediction.")
+    parser.add_argument('--motion_score_fn_path', type=str, default='models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle', help="Path to the OOD score function for the motion prediction.")
     parser.add_argument('--conformal_calibrator', type=str, default='models/motion_prediction/conformal_calibration/conformal_calibrator.npz', help="Path to the conditional-conformal calibrator .npz. Falls back to affine calibration if the file is absent.")
     parser.add_argument('--start_at', type=int, default=0, help='Start at this frame index.')
     parser.add_argument('--max_frames', type=int, default=10000000000, help='Maximum number of frames to process')

@@ -33,7 +33,8 @@ only the non-obvious essentials.
 - `models/pose_estimation/` — RegressFlow nets, **flat layout** (`jax_resnet50_regressflow*`,
   `jax_resnet18_regressflow*`, `..._3joints*`) + `camera-parameters.json`. `old_models/` = retired variants.
 - `models/motion_prediction/` — `final_training_run/` is the canonical (hosted) artifact;
-  `final_model/` and `final_model_for_ood/` are **derived** by `python scripts/build_motion_models.py`.
+  `final_model/`, `final_model_for_ood/` (default OOD head) and `final_model_for_ood_fixed_joints/`
+  are **derived** by `python scripts/build_motion_models.py`.
 - `models/ood_functions/` — OOD score-function files. `datasets/` — see `datasets/README.md`.
 
 ## Running
@@ -49,8 +50,10 @@ expected numbers are in README §3; `final_results/*.sh` regenerate the paper ta
 ## OOD scoring (`ood_scoring/score_model.py`)
 
 OOD runs on **reduced-output** models so the GGN/Lanczos stays tractable: pose 3-joint via
-`pose_estimation/reduce_regressflow_model.py`; motion `DCTPoseTransformerReducedOutput` (same weights,
-output dim 9) via `scripts/build_motion_models.py`. `score_model` does GGN → sketch → Lanczos and writes
+`pose_estimation/reduce_regressflow_model.py`; motion `DCTPoseTransformerRandomProjection` (same
+weights + a frozen orthonormal 390->8 projection, the **default**) or `DCTPoseTransformerReducedOutput`
+(same weights, 9 hand-picked coords), both via `scripts/build_motion_models.py`. OOD scores are
+head-specific and not comparable in magnitude -- `OOD_THRESHOLD` must be re-tuned per head. `score_model` does GGN → sketch → Lanczos and writes
 the score function to `models/ood_functions/`. Recomputable intermediates cache under `--cache_dir cache/`
 (`--load_ggn_vector_product` → `--load_sketch_op` → `--load_eigenpairs` chain); the `base_key` hash keys
 **only** those intermediates, not the deliverable. `--sketch_size` and `--lanczos_lm_iter` are the key

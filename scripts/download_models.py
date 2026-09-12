@@ -11,7 +11,8 @@ on-disk layout the pipeline expects, then derives the deployable motion models:
       motion_prediction/
         final_training_run/                         # per-stage Orbax checkpoints + exports
         final_model/                                # built from final stage (full model)
-        final_model_for_ood/                        # built from final stage (reduced output)
+        final_model_for_ood/                        # built: OOD head, random projection (default)
+        final_model_for_ood_fixed_joints/           # built: OOD head, 9 hand-picked coords
         conformal_calibration/                      # fitted conformal_calibrator.npz
       ood_functions/                                # cached sketched-Lanczos OOD score fns
         {jax_resnet18_regressflow_3joints,dct_pose_transformer}_score_fn.cloudpickle
@@ -52,7 +53,7 @@ DOWNLOAD_GROUPS: dict[str, list[str]] = {
 
 
 def _build_motion_models() -> None:
-    """Derive final_model/ and final_model_for_ood/ from the downloaded training run."""
+    """Derive final_model/ and the final_model_for_ood*/ dirs from the downloaded training run."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import build_motion_models  # noqa: E402  (local script, same dir)
 
@@ -80,7 +81,7 @@ def main() -> int:
     parser.add_argument(
         "--no-build",
         action="store_true",
-        help="Do not build final_model/ and final_model_for_ood/ after downloading.",
+        help="Do not build final_model/ and the final_model_for_ood*/ dirs after downloading.",
     )
     parser.add_argument("--token", default=None, help="HF token (defaults to cached login / HF_TOKEN).")
     args = parser.parse_args()
@@ -107,7 +108,7 @@ def main() -> int:
     )
 
     if not args.no_build and ("motion_prediction" in groups):
-        print("Building deployable motion models (final_model/, final_model_for_ood/)...")
+        print("Building deployable motion models (final_model/, final_model_for_ood*/)...")
         _build_motion_models()
 
     print("Done.")

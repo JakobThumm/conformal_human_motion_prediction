@@ -85,7 +85,8 @@ with [`scripts/build_motion_models.py`](../../../scripts/build_motion_models.py)
 
 ```bash
 python scripts/build_motion_models.py --run_dir models/motion_prediction/<run_id>
-# -> models/motion_prediction/final_model/ (full) and final_model_for_ood/ (reduced output)
+# -> models/motion_prediction/final_model/ (full), final_model_for_ood/ (OOD, random
+#    projection = default) and final_model_for_ood_fixed_joints/ (OOD, 9 hand-picked coords)
 ```
 
 ### Resuming / starting from a later stage

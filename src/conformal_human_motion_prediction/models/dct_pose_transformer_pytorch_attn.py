@@ -12,10 +12,15 @@ from jax import lax
 
 from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
     N_JOINTS,
+    OOD_PROJECTION_DIM,
     REDUCED_TIMESTEP,
     REDUCED_JOINT_INDICES
 )
 from conformal_human_motion_prediction.models.pytorch_compatible_attention import PyTorchMultiheadAttention
+from conformal_human_motion_prediction.models.ood_readout import (
+    FrozenMotionRandomProjection,
+    MotionRandomProjection,
+)
 
 
 def pose_prediction_loss(pred_poses, target_poses):
@@ -452,6 +457,15 @@ class DCTPoseTransformer(nn.Module):
     dropout: float = 0.0
     # Use a reduced output size for faster OOD evaluation
     reduced_size: bool = False
+    # Default reduced output for OOD evaluation: a fixed random orthonormal projection of the
+    # whole future motion, rather than the hand-picked 9 coordinates of `reduced_size`. Takes
+    # precedence over `reduced_size`. Only immutable defaults here -- pickled instances of this
+    # class (the cloudpickled OOD score functions) restore missing attributes from the class
+    # defaults, so previously built score functions keep loading.
+    random_projection_output: bool = False
+    projection_dim: int = OOD_PROJECTION_DIM
+    # Stop-gradient the readout head's parameters so they stay out of the GGN / Jacobian.
+    freeze_ood_head: bool = True
 
     def __post_init__(self) -> None:
         self.dct_mat, self.idct_mat = get_dct_matrix(self.seq_len)
@@ -469,8 +483,9 @@ class DCTPoseTransformer(nn.Module):
             train: Whether in training mode
 
         Returns:
+            If random_projection_output=True: projected motion [batch_size, projection_dim]
             If reduced_size=True: predicted poses [batch_size, reduced_output_dim]
-            If reduced_size=False: tuple (predicted poses, (cov, L))
+            Otherwise: tuple (predicted poses, (cov, L))
                 - predicted poses: [batch_size, seq_len_output, input_dim]
                 - cov: Covariance matrices of the predictions. Shape: (batch_size, seq_len_output, num_joints, 3, 3)
                 - L: Cholesky factors of the covariance matrices (used in gaussian_nll_from_cholesky loss).
@@ -592,7 +607,22 @@ class DCTPoseTransformer(nn.Module):
         # Add offset
         pred_poses = pred_poses[:, :self.seq_len_output, :] + offset
 
-        if self.reduced_size:
+        if self.random_projection_output:
+            # Reduced output for OOD scoring: project the *whole* offset-relative future motion
+            # (in meters, the model's internal unit convention) onto `projection_dim` fixed
+            # orthonormal directions. The offset depends only on the input, so removing it does
+            # not change d/d(params); it just keeps the readout translation-invariant.
+            y_rel = (pred_poses - offset) / self.unit_conversion  # [batch, seq_len_output, input_dim]
+            projection_cls = (
+                FrozenMotionRandomProjection if self.freeze_ood_head else MotionRandomProjection
+            )
+            projected = projection_cls(
+                projection_dim=self.projection_dim, name="random_projection"
+            )(y_rel)
+
+            # The OOD detection only works for a single output tensor
+            return projected  # [batch_size, projection_dim]
+        elif self.reduced_size:
             # Extract only the specified timestep and joints
             pred_poses_timestep = pred_poses[:, self.reduced_timestep, :]  # [batch_size, input_dim]
             pred_poses_timestep = pred_poses_timestep.reshape(batch_size, -1, 3)  # [batch_size, num_joints, 3]

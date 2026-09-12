@@ -26,16 +26,24 @@ models/
 │   └── camera-parameters.json
 ├── motion_prediction/
 │   ├── final_training_run/                  # per-stage Orbax checkpoints + exports (downloaded)
-│   ├── final_model/                         # built from final stage: full DCTPoseTransformer
-│   └── final_model_for_ood/                 # built from final stage: reduced-output (OOD)
-└── ood_functions/                           # cached sketched-Lanczos OOD score fns (downloaded)
+│   ├── final_model/                         # built: full DCTPoseTransformer
+│   ├── final_model_for_ood/                 # built: OOD head, random projection (DEFAULT)
+│   └── final_model_for_ood_fixed_joints/    # built: OOD head, 9 hand-picked coords (option)
+└── ood_functions/                           # sketched-Lanczos OOD score fns
     ├── jax_resnet18_regressflow_3joints_score_fn.cloudpickle
-    └── dct_pose_transformer_score_fn.cloudpickle
+    ├── dct_pose_transformer_randproj_score_fn.cloudpickle       # motion OOD (default)
+    └── dct_pose_transformer_fixed_joints_score_fn.cloudpickle    # motion OOD (option)
 ```
 
-`final_model/` and `final_model_for_ood/` are **not** downloaded — `download_models.py` derives
-them locally from `final_training_run/` via [`scripts/build_motion_models.py`](../scripts/build_motion_models.py),
-so the reduced-output OOD args stay in sync with the code (`REDUCED_JOINT_INDICES`).
+`final_model/` and the `final_model_for_ood*/` dirs are **not** downloaded — `download_models.py`
+derives them locally from `final_training_run/` via
+[`scripts/build_motion_models.py`](../scripts/build_motion_models.py), so the OOD readout heads stay
+in sync with the code (`OOD_PROJECTION_DIM` / `OOD_PROJECTION_SEED`, `REDUCED_JOINT_INDICES`).
+
+The motion score functions are head-specific and their scores are **not** comparable in magnitude.
+The Hub may still host a legacy `dct_pose_transformer_score_fn.cloudpickle`; that file is the
+fixed-joints head under its old name. Rebuild the score functions locally (README section 2.3) rather
+than relying on the hosted copy after a head change.
 
 The `old_models/` folders (legacy / superseded checkpoints) are intentionally **not** hosted.
 
@@ -52,6 +60,7 @@ python scripts/upload_models.py     # pose_estimation/ (minus old_models) + fina
 
 - Pose scripts: `--model_save_path models/pose_estimation`
 - Motion scripts: `--motion_model_save_path models/motion_prediction/final_model/dct_pose_transformer.pickle`
-- OOD score function: `--motion_score_fn_path models/ood_functions/dct_pose_transformer_score_fn.cloudpickle`
+- Motion OOD score function (default head):
+  `--motion_score_fn_path models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle`
 
 The model **definitions** (code) live in `src/conformal_human_motion_prediction/models/`, not here.

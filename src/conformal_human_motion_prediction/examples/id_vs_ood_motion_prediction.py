@@ -338,7 +338,15 @@ def main():
                         help='Maximum number of samples to evaluate (default: 640)')
     parser.add_argument('--output_dir', type=str, default='results/motion_prediction/ID_vs_OOD',
                         help='Directory to save results (default: results/motion_prediction/ID_vs_OOD)')
+    parser.add_argument('--seed', type=int, default=0,
+                        help='Seed for the ID/OOD subsampling and the OOD time-shuffle. Pass the same '
+                             'seed when comparing two score functions so both see identical samples '
+                             '(default: 0)')
     args = parser.parse_args()
+
+    # Both the subsample below and the per-item OOD time-shuffle in Human36mMotionDataset3D draw
+    # from the global numpy RNG, so seeding it here pins the evaluation set for a paired comparison.
+    np.random.seed(args.seed)
 
     print("=" * 80)
     print("ID vs OOD Motion Prediction Comparison")
@@ -355,19 +363,16 @@ def main():
             full_model_path,
             "dct_pose_transformer.pickle"
         )
-        ood_model_path = os.path.join(
-            root_dir,
-            "models/motion_prediction/final_model_for_ood"
-        )
-
-        # Use score function from command line argument or default
+        # Use score function from command line argument or default. The default is the deployed
+        # random-projection head; pass --score_fn to compare another head (e.g. the legacy
+        # fixed-joints one). Use the same --max_samples and --seed across heads: OOD scores are
+        # not comparable in magnitude, so only rank-based metrics (AUROC/AUPRC) are meaningful.
         if args.score_fn:
             score_functions_path = args.score_fn
         else:
-            # Default score function
             score_functions_path = os.path.join(
-                ood_model_path,
-                "dct_pose_transformer_scores_subsample10000_lanczos_seed0_size_HM0of0_LM230of256_sketch_srft_seed0_size100000.cloudpickle",
+                root_dir,
+                "models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle",
             )
 
         max_samples = args.max_samples  # Limit samples for quick testing
@@ -458,6 +463,7 @@ def main():
             'score_function': score_functions_path,
             'score_fn_name': score_fn_name,
             'max_samples': max_samples,
+            'seed': args.seed,
             'auroc': float(detection_metrics['auroc']),
             'auprc': float(detection_metrics['auprc']),
             'id_mpjpe_mean': float(id_results['mpjpe_overall']),

@@ -13,12 +13,17 @@
 #
 # Prerequisites (NOT run here): a trained motion model at $MODEL and the motion OOD score function
 # at $SCORE_FN (see README).
+#
+# NOTE: $SCORE_FN and OOD_THRESHOLD in motion_prediction/h36m_settings.py are head-specific and
+# must match. The default score function is the random-projection head (scores in metres, ID mean
+# ~0); the legacy fixed-joints head scores in millimetres (ID mean ~9e4). Re-tune OOD_THRESHOLD
+# after changing heads, otherwise OOD masking silently never fires.
 set -e
 
 # export XLA_PYTHON_CLIENT_PREALLOCATE=false   # share the GPU politely (jax pre-alloc off)
 
 MODEL="${MODEL:-models/motion_prediction/final_model/dct_pose_transformer.pickle}"
-SCORE_FN="${SCORE_FN:-models/ood_functions/dct_pose_transformer_score_fn.cloudpickle}"
+SCORE_FN="${SCORE_FN:-models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle}"
 CALIB="models/motion_prediction/conformal_calibration/conformal_calibrator.npz"
 CSV="results/final/robot_shield/shield_results.csv"
 LIKELIHOOD="${LIKELIHOOD:-0.9999}"

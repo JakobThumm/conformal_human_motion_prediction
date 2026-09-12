@@ -201,6 +201,19 @@ def model_from_string(
             reduced_size=True,
         )
         wrapped_model = wrap_model(model)
+    elif model_name == "DCTPoseTransformerRandomProjection":
+        # Default OOD readout head: a fixed random orthonormal projection of the whole future
+        # motion onto `output_dim` directions (see models/ood_readout.py). The projection matrix
+        # lives in the checkpoint and is stop-gradient-frozen, so it stays out of the GGN.
+        model = DCTPoseTransformer(
+            input_dim=(3 * N_JOINTS),  # 3D coordinates per joint
+            seq_len=INPUT_HORIZON_LENGTH,
+            seq_len_output=PREDICTION_HORIZON_LENGTH,
+            reduced_size=False,
+            random_projection_output=True,
+            projection_dim=output_dim,
+        )
+        wrapped_model = wrap_model(model)
     else:
         raise ValueError(f"Model {model_name} is not implemented (yet)")
 
