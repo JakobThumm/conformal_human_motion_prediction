@@ -39,7 +39,6 @@ import argparse
 import multiprocessing as mp
 import os
 import sys
-import time as _time
 from types import SimpleNamespace
 
 
@@ -75,6 +74,7 @@ else:
 import cloudpickle
 import numpy as np
 from scipy.spatial import cKDTree
+from tqdm import tqdm
 
 from conformal_human_motion_prediction.motion_prediction.inference_helper import (
     calibrate_covariance_matrices,
@@ -446,6 +446,37 @@ def transform_capsules(p1, p2, pose):
 # --------------------------------------------------------------------------- simulation
 
 
+def traj_candidates(st, rot_t, tvec, ai, meta):
+    """Levels 4-5 for one (pose, trajectory): which level-3-active motions reach the narrow phase.
+
+    Level 4 tests the trajectory's single bounding sphere against each active motion's
+    full-human sphere at that trajectory's cumulative step ``k``; level 5 refines the survivors
+    per (robot link, human body) sphere pair. Predicted and true occupancy are culled separately.
+
+    Returns ``(pred_cand [M] bool, true_cand [M] bool, n_l4_pred, n_l4_true)``.
+    """
+    _, _, valid, k, _, rcp_c, rcp_r, rct_c, rct_r, _ = meta
+    pred_cand = np.zeros(st.M, dtype=bool)
+    true_cand = np.zeros(st.M, dtype=bool)
+    rc_p = rcp_c @ rot_t + tvec
+    rt_c, rt_r = bound_spheres(rc_p[None], rcp_r[None])
+    dp = np.linalg.norm(st.hmi_pred_c[ai, k] - rt_c[0], axis=1)
+    aip = ai[dp <= rt_r[0] + st.hmi_pred_r[ai, k]]                                  # level 4
+    if aip.size:
+        keep = overapprox_candidates(rc_p, rcp_r, st.oa_pred_c[aip, k], st.oa_pred_r[aip, k])
+        pred_cand[aip[keep]] = True                                                 # level 5
+    ait = np.empty(0, dtype=np.int64)
+    if valid.any():
+        rc_t = rct_c @ rot_t + tvec
+        rtt_c, rtt_r = bound_spheres(rc_t[None], rct_r[None])
+        dt = np.linalg.norm(st.hmi_true_c[ai, k] - rtt_c[0], axis=1)
+        ait = ai[dt <= rtt_r[0] + st.hmi_true_r[ai, k]]                             # level 4
+        if ait.size:
+            keep = overapprox_candidates(rc_t, rct_r, st.oa_true_c[ait, k], st.oa_true_r[ait, k])
+            true_cand[ait[keep]] = True                                             # level 5
+    return pred_cand, true_cand, int(aip.size), int(ait.size)
+
+
 def run_pose_pure(st, pose):
     """Evaluate one robot base pose over all trajectories x humans. Returns a counter dict.
 
@@ -477,7 +508,8 @@ def run_pose_pure(st, pose):
     ai = np.flatnonzero(active)
     instances = [] if st.save_failures else None
 
-    for rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r, t_ms in st.traj_meta:
+    for meta in st.traj_meta:
+        rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r, t_ms = meta
         not_verified = np.zeros(M, dtype=bool)
         contact = np.zeros(M, dtype=bool)
         unsafe = np.zeros(M, dtype=bool)
@@ -489,24 +521,7 @@ def run_pose_pure(st, pose):
         elif ai.size == 0:
             pred_cand = true_cand = np.zeros(M, dtype=bool)
         else:
-            # ---- level 4 (per traj x active motion) then level 5 (per link x body) ----
-            pred_cand = np.zeros(M, dtype=bool)
-            true_cand = np.zeros(M, dtype=bool)
-            rc_p = rcp_c @ rot_t + tvec
-            rt_c, rt_r = bound_spheres(rc_p[None], rcp_r[None])
-            dp = np.linalg.norm(st.hmi_pred_c[ai, k] - rt_c[0], axis=1)
-            aip = ai[dp <= rt_r[0] + st.hmi_pred_r[ai, k]]
-            if aip.size:
-                keep = overapprox_candidates(rc_p, rcp_r, st.oa_pred_c[aip, k], st.oa_pred_r[aip, k])
-                pred_cand[aip[keep]] = True
-            if valid.any():
-                rc_t = rct_c @ rot_t + tvec
-                rtt_c, rtt_r = bound_spheres(rc_t[None], rct_r[None])
-                dt = np.linalg.norm(st.hmi_true_c[ai, k] - rtt_c[0], axis=1)
-                ait = ai[dt <= rtt_r[0] + st.hmi_true_r[ai, k]]
-                if ait.size:
-                    keep = overapprox_candidates(rc_t, rct_r, st.oa_true_c[ait, k], st.oa_true_r[ait, k])
-                    true_cand[ait[keep]] = True
+            pred_cand, true_cand, _, _ = traj_candidates(st, rot_t, tvec, ai, meta)
             c["n_pred_cand"] += int(pred_cand.sum())
             c["n_true_cand"] += int(true_cand.sum())
 
@@ -652,6 +667,99 @@ def _pose_worker(item):
     return idx, run_pose_pure(_WORKER_ST, pose)
 
 
+def run_cull_census(st, poses, n_traj, fine_poses, t_cycle, pose_radius):
+    """Per-level survival census of the culling hierarchy -- analysis only, no shield verdicts.
+
+    Every level is a *sound* proximity test: what a level culls provably cannot touch the robot.
+    So a level's survival rate answers "how often is the human close enough that this level can no
+    longer rule out contact?", getting tighter as the level gets finer:
+
+      * level 1 -- per pose: the robot's whole-log workspace sphere vs the sphere enclosing *all*
+        human samples. Coarsest: one human sample reaching the robot keeps the whole pose.
+      * level 2 -- per (pose, group of ``--motion_group_size`` consecutive samples).
+      * level 3 -- per (pose, human sample). Trajectory-independent, so its share is also the
+        share of (pose, trajectory, sample) test cycles whose human is near the robot.
+      * levels 4/5 -- per (pose, trajectory, sample) test cycle, i.e. per safety-function cycle:
+        level 4 tests the trajectory's bounding sphere, level 5 the per-(link, body) sphere pairs;
+        level-5 survivors are what the exact narrow phase has to check. Reported separately for
+        the predicted human occupancy (what the shield reasons about) and the true occupancy.
+
+    Levels 1-3 run on all ``poses``; levels 4-5, which loop over trajectories, on the first
+    ``fine_poses`` of them (poses culled at level 1 contribute zero and stay in the denominator).
+    """
+    P = len(poses)
+    Pf = min(int(fine_poses), P)
+    M, n_groups = st.M, int(st.group_id[-1]) + 1
+    n_l1 = n_l2 = n_l3 = 0            # levels 1-3 over all P poses
+    f_l1 = f_l2 = f_l3 = 0            # levels 1-3 over the first Pf poses (levels 4-5 denominator)
+    n_l4p = n_l4t = n_l5p = n_l5t = 0
+    for pidx, pose in enumerate(tqdm(poses, desc="census", unit="pose", dynamic_ncols=True,
+                                     mininterval=2.0)):
+        fine = pidx < Pf
+        rot_t, tvec = pose_rt(pose)
+        r_c = st.R_c @ rot_t + tvec
+        if np.linalg.norm(st.H_c - r_c) > st.H_r + st.R_r:                          # level 1
+            continue
+        n_l1 += 1
+        f_l1 += int(fine)
+        grp_hit = np.linalg.norm(st.hsm_c - r_c, axis=1) <= st.hsm_r + st.R_r       # level 2
+        n_l2 += int(grp_hit.sum())
+        active = (np.linalg.norm(st.hm_comb_c - r_c, axis=1) <= st.hm_comb_r + st.R_r) \
+            & grp_hit[st.group_id]                                                  # level 3
+        n_l3 += int(active.sum())
+        if fine:
+            f_l2 += int(grp_hit.sum())
+            f_l3 += int(active.sum())
+            if active.any():
+                ai = np.flatnonzero(active)
+                for meta in st.traj_meta:                                           # levels 4-5
+                    pred_cand, true_cand, l4p, l4t = traj_candidates(st, rot_t, tvec, ai, meta)
+                    n_l4p += l4p; n_l4t += l4t
+                    n_l5p += int(pred_cand.sum()); n_l5t += int(true_cand.sum())
+
+    def table(title, rowspec):
+        # min/h only for the levels whose unit *is* a safety-function cycle (3 and finer): there a
+        # share of cycles is a share of operating time. A level-1/2 share counts poses and sample
+        # groups, which is not a duration.
+        print(f"\n{title}")
+        print(f"{'level':>7} | {'unit':<32} | {'survivors':>18} | {'share':>9} | min/h")
+        print("-" * 90)
+        for name, unit, num, den in rowspec:
+            share = num / den if den else float("nan")
+            per_cycle = not name.startswith(("1", "2"))
+            mph = f"{60 * share:>7.3f}" if per_cycle else f"{'n/a':>7}"
+            print(f"{name:>7} | {unit:<32} | {num:>18,} | {100 * share:>8.4f}% | {mph}")
+
+    print("\n================= Culling-hierarchy census (proximity only) =================")
+    print(f"Poses: {P:,}   trajectories: {n_traj}   human samples M: {M:,}   "
+          f"level-2 groups: {n_groups:,}   cycles: {P * n_traj * M:,}")
+    table(f"Coarse levels, all {P:,} poses:", [
+        ("1", "robot pose", n_l1, P),
+        ("2", "pose x motion group", n_l2, P * n_groups),
+        ("3", "pose x human sample (= cycle)", n_l3, P * M),
+    ])
+    # Levels 4-5 loop over trajectories, so they run on a sub-sample; levels 1-3 are repeated on
+    # exactly that sub-sample, otherwise the shares are not comparable (the hierarchy is nested,
+    # so on one pose set share(1) >= share(2) >= ... >= share(5) must hold).
+    trials_f = Pf * n_traj * M
+    table(f"All levels, first {Pf:,} poses ({f_l1:,} of them survive level 1):", [
+        ("1", "robot pose", f_l1, Pf),
+        ("2", "pose x motion group", f_l2, Pf * n_groups),
+        ("3", "pose x human sample (= cycle)", f_l3, Pf * M),
+        ("4 pred", "cycle, predicted occupancy", n_l4p, trials_f),
+        ("5 pred", "cycle, predicted occupancy", n_l5p, trials_f),
+        ("4 true", "cycle, true occupancy", n_l4t, trials_f),
+        ("5 true", "cycle, true occupancy", n_l5t, trials_f),
+    ])
+    print("=" * 90)
+    print(f"(one cycle = one (pose, trajectory, human sample) trial = {t_cycle:g} s of shield "
+          f"operation, so a level-3/4/5 share of cycles is a share of operating time -- 'min/h' "
+          f"states it as minutes per operating hour. Levels 1-2 count poses and sample groups, "
+          f"not cycles, hence no min/h. Every share is over the sampled robot base placements "
+          f"(xy area-uniform in a {pose_radius:g} m disk around the human scene), so it answers "
+          f"'how often is the human near the robot' for *that* placement distribution.)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--robot_csv", type=str,
@@ -701,6 +809,12 @@ def main():
     # OOD filtering is off by default while the OOD score is being reworked (all current
     # samples are flagged OOD). Re-enable with --mask_ood once scores are trustworthy.
     parser.add_argument("--mask_ood", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--ood_threshold", type=float, default=None,
+                        help="Override OOD_THRESHOLD from the settings module. The threshold is "
+                             "head-specific (random-projection head: metres, ~0.35; legacy "
+                             "fixed-joints head: millimetres, ~3e5), so a results file predicted "
+                             "with one head needs that head's threshold -- otherwise --mask_ood "
+                             "either masks everything or nothing.")
     parser.add_argument("--mask_too_fast", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--calibrate", action=argparse.BooleanOptionalAction, default=True,
                         help="Apply the affine covariance calibration before forming the set "
@@ -713,6 +827,14 @@ def main():
                              "to force the affine fallback; a missing file also falls back.")
     parser.add_argument("--overapprox", action=argparse.BooleanOptionalAction, default=True,
                         help="Use the multi-level bounding-sphere hierarchy to cull far humans.")
+    parser.add_argument("--cull_census", type=int, default=None,
+                        help="Analysis mode: sample this many robot poses, report how often each "
+                             "culling level still considers the human close enough to touch the "
+                             "robot (per-level survival rates + minutes per operating hour), and "
+                             "exit without running the shield.")
+    parser.add_argument("--cull_census_fine", type=int, default=2000,
+                        help="Poses of the --cull_census sample that also get the per-trajectory "
+                             "levels 4-5 (the expensive part).")
     parser.add_argument("--motion_group_size", type=int, default=50,
                         help="Motions per level-2 group (consecutive samples are spatially "
                              "coherent in the sequence-ordered dataset).")
@@ -798,8 +920,12 @@ def main():
     # SARA (ISO 13855) uses its own constant-velocity reachable set and ignores the conformal
     # calibrator entirely; make that explicit so a stray calibrator path can't leak in.
     human_calibrator = None if args.human_set == "sara" else calibrator
+    ood_threshold = args.ood_threshold if args.ood_threshold is not None else OOD_THRESHOLD
+    if args.mask_ood:
+        print(f"OOD masking on with threshold {ood_threshold:g}"
+              + ("" if args.ood_threshold is None else " (--ood_threshold override)"))
     horizon_times, pred_c, pred_r, true_c, true_r, human_input = build_human_arrays(
-        results, args.fps, args.mask_ood, args.mask_too_fast, OOD_THRESHOLD,
+        results, args.fps, args.mask_ood, args.mask_too_fast, ood_threshold,
         SET_LIKELIHOOD, SARA_MEASUREMENT_UNCERTAINTY, HUMAN_RADIUS,
         args.calibrate, COV_CALIBRATION_CT, COV_CALIBRATION_IT, COV_CALIBRATION_FACTORS,
         args.max_human_samples, rng, conformal_calibrator=human_calibrator,
@@ -904,7 +1030,6 @@ def main():
     if args.overapprox:
         R_c, R_r = bound_spheres(np.concatenate(glob_c)[None], np.concatenate(glob_r)[None])
         R_c, R_r = R_c[0], float(R_r[0])
-    t0 = _time.time()
 
     # Read-only state shared with (forked) pose workers.
     st = SimpleNamespace(
@@ -928,7 +1053,9 @@ def main():
     n_traj = len(times_ms)
     # Derive the number of robot poses from a target test-cycle count N so every method reaches
     # approximately the same N even when OOD/too-fast filtering changes the eligible sample count M.
-    if args.n_test_cycles is not None:
+    if args.cull_census is not None:
+        num_robot_poses = args.cull_census
+    elif args.n_test_cycles is not None:
         per_pose = max(1, n_traj * M)
         num_robot_poses = max(1, int(round(args.n_test_cycles / per_pose)))
         print(f"Target N = {args.n_test_cycles:.3e} test cycles over {n_traj} trajectories x {M} "
@@ -937,6 +1064,13 @@ def main():
     else:
         num_robot_poses = args.num_robot_poses
     poses = sample_robot_poses(num_robot_poses, args.pose_radius, args.pose_z_offset, rng)
+
+    # ----------------------------------------------------------------- culling census (analysis)
+    if args.cull_census is not None:
+        if not args.overapprox:
+            raise SystemExit("--cull_census needs the culling hierarchy (drop --no-overapprox).")
+        run_cull_census(st, poses, n_traj, args.cull_census_fine, t_cycle, args.pose_radius)
+        return
 
     # ----------------------------------------------------------------- parity check (CPU vs GPU)
     if args.parity > 0:
@@ -974,30 +1108,36 @@ def main():
         print(f"Evaluating {len(poses)} random robot pose(s) over {n_workers} worker(s) "
               f"(xy in {args.pose_radius} m disk, z +/-{args.pose_z_offset} m, yaw +/-pi) ...")
     n_poses_skipped = 0  # whole poses culled at level 1 (robot never reaches any human)
+    n_l3_active = 0      # (pose, human) pairs surviving levels 1-3 (human near the robot)
     failure_instances = []
+    # Runs go up to millions of poses, so progress is a bar (stderr) rather than a line per pose;
+    # the cumulative dangerous-failure counts ride along in the postfix, refreshed every 100 poses.
+    bar = tqdm(total=len(poses), desc="poses", unit="pose", dynamic_ncols=True, mininterval=2.0)
 
-    def accumulate(pidx, cc):
+    def accumulate(cc):
         nonlocal total_pairs, n_verified, n_contact, n_unsafe, n_verified_contact
         nonlocal n_verified_unsafe, n_intervals_no_truth, n_pred_cand, n_true_cand, n_poses_skipped
+        nonlocal n_l3_active
         total_pairs += cc["total_pairs"]; n_verified += cc["n_verified"]
         n_contact += cc["n_contact"]; n_unsafe += cc["n_unsafe"]
         n_verified_contact += cc["n_verified_contact"]; n_verified_unsafe += cc["n_verified_unsafe"]
         n_intervals_no_truth += cc["n_intervals_no_truth"]
         n_pred_cand += cc["n_pred_cand"]; n_true_cand += cc["n_true_cand"]
         n_poses_skipped += cc["n_poses_skipped"]
+        n_l3_active += cc["active"]
         if "instances" in cc:
             failure_instances.extend(cc["instances"])
-        p = poses[pidx]
-        print(f"  pose {pidx + 1}/{len(poses)} "
-              f"(yaw={p[0]:+.2f} xy=({p[1]:+.2f},{p[2]:+.2f}) z={p[3]:+.2f}): active={cc['active']} "
-              f"cum verified&contact={n_verified_contact:,} verified&unsafe={n_verified_unsafe:,} "
-              f"({_time.time() - t0:.0f}s)")
+        bar.update(1)
+        if bar.n % 100 == 0 or bar.n == bar.total:
+            bar.set_postfix_str(f"v&contact={n_verified_contact:,} "
+                                f"v&unsafe={n_verified_unsafe:,} "
+                                f"L1-culled={n_poses_skipped:,}", refresh=False)
 
     if args.backend == "gpu":
         from conformal_human_motion_prediction.examples.shield_gpu import GpuShieldEvaluator
         ev = GpuShieldEvaluator(st, n_traj, dtype=args.gpu_dtype, a_chunk=args.gpu_a_chunk,
                                 capture_failures=bool(args.save_failures))
-        for pidx, pose in enumerate(poses):
+        for pose in poses:
             skip, ai = pose_active_set(st, pose)
             if skip:
                 cc = _skipped_pose_counts(st, n_traj)
@@ -1008,16 +1148,17 @@ def main():
                     # flagged; cap per pose like the CPU path does.
                     cc["instances"] = gpu_failure_instances(
                         st, pose, cc["failures"][:args.max_failures])
-            accumulate(pidx, cc)
+            accumulate(cc)
     elif n_workers > 1:
         global _WORKER_ST
         _WORKER_ST = st  # set before forking so workers inherit it copy-on-write
         with mp.get_context("fork").Pool(n_workers) as pool:
-            for pidx, cc in pool.imap_unordered(_pose_worker, list(enumerate(poses))):
-                accumulate(pidx, cc)
+            for _, cc in pool.imap_unordered(_pose_worker, list(enumerate(poses))):
+                accumulate(cc)
     else:
-        for pidx, pose in enumerate(poses):
-            accumulate(pidx, run_pose_pure(st, pose))
+        for pose in poses:
+            accumulate(run_pose_pure(st, pose))
+    bar.close()
 
     if args.save_failures:
         out = os.path.join(root_dir, args.save_failures) if not os.path.isabs(args.save_failures) else args.save_failures
@@ -1038,9 +1179,23 @@ def main():
     print(f"Intervals without ground-truth robot state (past log end): {n_intervals_no_truth:,}")
     if args.overapprox:
         print(f"Poses fully culled at level 1: {n_poses_skipped}/{len(poses)}")
-        print(f"Level-5 survivors (detailed-checked): predicted "
-              f"{pct(n_pred_cand, total_pairs):.3f}%, true {pct(n_true_cand, total_pairs):.3f}% "
-              f"of trials (rest culled by the hierarchy)")
+        # Level 3 is the coarsest per-cycle proximity measure: one (pose, trajectory, human)
+        # trial is one safety-function cycle and the level-3 test does not depend on the
+        # trajectory, so its share of (pose, human) pairs is also its share of cycles -- i.e. the
+        # share of operating time in which the human is inside the robot's swept workspace.
+        l3_share = pct(n_l3_active, len(poses) * M) / 100.0
+        print(f"Level-3 active (pose, human) pairs: {n_l3_active:,}/{len(poses) * M:,} "
+              f"({100 * l3_share:.3f}% of cycles = {60 * l3_share:.3f} min per operating hour -- "
+              f"the human is inside the robot's swept workspace, so the hierarchy cannot rule out "
+              f"a contact)")
+        if args.backend == "gpu":
+            print("Level-4/5 survivors: n/a on the GPU backend (it runs the exact test over every "
+                  "level-3-active motion) -- use --backend cpu, or --cull_census for a full "
+                  "per-level census")
+        else:
+            print(f"Level-5 survivors (detailed-checked): predicted "
+                  f"{pct(n_pred_cand, total_pairs):.3f}%, true {pct(n_true_cand, total_pairs):.3f}% "
+                  f"of trials (rest culled by the hierarchy)")
     print("-------------------------------------------------------------------")
     print(f"Verified (shield says safe) : {n_verified:,}  ({pct(n_verified, total_pairs):.3f}% of trials)")
     print(f"True contact                : {n_contact:,}  ({pct(n_contact, total_pairs):.3f}% of trials)")
@@ -1092,6 +1247,8 @@ def main():
             pose_z_offset=args.pose_z_offset, robot_stride=args.robot_stride, seed=args.seed,
             n_trajectories=len(times_ms), n_human_samples=M, t_cycle=t_cycle,
             total_pairs=total_pairs, n_poses_skipped=n_poses_skipped,
+            n_l3_active=n_l3_active, pct_l3_active=pct(n_l3_active, len(poses) * M),
+            min_per_hour_l3_active=0.6 * pct(n_l3_active, len(poses) * M),
             n_verified=n_verified, pct_verified=pct(n_verified, total_pairs),
             n_contact=n_contact, pct_contact=pct(n_contact, total_pairs),
             n_unsafe=n_unsafe, pct_unsafe=pct(n_unsafe, total_pairs),

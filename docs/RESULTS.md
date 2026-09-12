@@ -2918,6 +2918,51 @@ Saved table to results/final/robot_shield/robot_shield_safety.tex
     \end{tabular}
 \end{table}
 
+# Human-in-Workspace Census (culling hierarchy)
+
+How often the human is close enough to the robot that a given level of the culling
+hierarchy can no longer rule out a contact. Every level is a *sound* proximity test, so
+each share is an upper bound that tightens with the level. Levels 3-5 are per
+(pose, trajectory, human) trial = one 4 ms safety-function cycle, so their share of cycles is
+a share of operating time; levels 1-2 count base placements and 50-sample groups, which are
+not durations. Shares are over robot base poses drawn area-uniformly in a 10 m disk around
+the recorded human activity (yaw uniform, z +/-0.2 m) -- the same distribution the
+certification runs use.
+
+```bash
+python -m conformal_human_motion_prediction.examples.simulate_robot_shield \
+  --results_file results/motion_prediction/motion_prediction_results_test.cloudpickle \
+  --conformal_calibrator models/motion_prediction/conformal_calibration/conformal_calibrator.npz \
+  --backend cpu --pose_radius 10.0 --pose_z_offset 0.2 --robot_stride 25 --seed 0 \
+  --human_set conformal --mask_ood --ood_threshold 3e5 \
+  --cull_census 50000 --cull_census_fine 500
+```
+
+(`--ood_threshold 3e5` because the stored results files carry fixed-joints-head OOD scores;
+the settings default `0.35` belongs to the random-projection head. The level-1 shares below
+reproduce `n_poses_skipped` from the 3.5-3.7 M-pose certification runs: 71.95 / 57.71 /
+17.13 % here vs 72.01 / 57.94 / 16.98 % there.)
+
+| Method | L1 per pose | L2 pose x group | **L3 per cycle** | **L3 min/h** | L4 pred | L5 pred | L4 true | L5 true | L5 true min/h |
+|---|---|---|---|---|---|---|---|---|---|
+| ISO 13855 without OOD filtered | 71.95 % | 7.25 % | **4.68 %** | **2.81** | 2.63 % | 1.26 % | 1.37 % | 0.36 % | 0.22 |
+| Ours without OOD filtered | 57.71 % | 5.92 % | **3.92 %** | **2.35** | 2.42 % | 0.86 % | 1.37 % | 0.36 % | 0.22 |
+| Ours with OOD filtered | 17.13 % | 5.54 % | **3.87 %** | **2.32** | 2.39 % | 0.84 % | 1.36 % | 0.35 % | 0.21 |
+
+Levels 1-3: 50,000 poses. Levels 4-5: the first 500 of them (they loop over all 95
+trajectories); on that sub-sample the level-1 rates are 69.2 / 52.4 / 14.6 %, i.e. ~5 % low
+relative to the 50,000-pose estimate, so the level-4/5 shares are low by about the same
+factor. Level-3 is what the deployed pipeline quotes:
+
+> For a robot base placed uniformly at random within 10 m of the recorded human activity,
+> the human is inside the robot's swept workspace in 3.87 % of safety cycles -- 2.32
+> minutes per operating hour.
+
+A normal shield run records this level-3 number too (`Level-3 active (pose, human) pairs`
+in the summary; `n_l3_active` / `pct_l3_active` / `min_per_hour_l3_active` in the results
+CSV), so it no longer needs a separate census run.
+
+
 # New Pipeline Results
 \begin{table}[h]
     \centering

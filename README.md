@@ -503,6 +503,22 @@ The full chain, one step per artifact:
    <level>` (default `0.9999`; the level must be a column in the CSV, so a CSV from an older run
    has to be regenerated before the deeper levels can be reported).
 
+**How often is the human actually near the robot?** `examples.simulate_robot_shield --cull_census
+<poses> [--cull_census_fine <poses>]` samples robot base poses, reports the per-level survival rate
+of the culling hierarchy (level 1 per pose, level 2 per sample group, levels 3-5 per safety-function
+cycle, as a share and as minutes per operating hour) and exits without running the shield. Each
+level is a sound proximity test, so its survival rate bounds how often the human is close enough to
+be touched at all; levels 4-5 loop over trajectories, so they run on the `--cull_census_fine`
+sub-sample (levels 1-3 are repeated on exactly that sub-sample for a comparable, nested table). A
+normal run only records level 1 (`n_poses_skipped`) and level 3 (`n_l3_active`); levels 4-5 are not
+counted on the GPU backend, which runs the exact test over every level-3-active motion.
+
+**OOD threshold and the results file must come from the same OOD head.** `--mask_ood` compares the
+scores stored in the results cloudpickle against `OOD_THRESHOLD` from the settings module — metres
+(~0.35) for the random-projection head, millimetres (~3e5) for the legacy fixed-joints head. A
+mismatch silently masks everything or nothing; `--ood_threshold <value>` overrides the setting for a
+results file predicted with the other head.
+
 VSCode launch config *"Simulate Robot Shield"* (settings: OOD threshold `1.5E-5`, set likelihood
 `0.9999`):
 
