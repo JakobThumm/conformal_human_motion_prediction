@@ -68,17 +68,17 @@ COMMON="--results_file $RESULTS_TEST --conformal_calibrator $CALIB \
   --n_test_cycles $N_TEST_CYCLES --pose_radius $POSE_RADIUS --pose_z_offset 0.2 \
   --robot_stride 25 --seed 0 --results_csv $CSV"
 
-echo "==================== ISO 13855 without OOD filtered (SARA, v=2 m/s) ===================="
+echo "==================== Ours with OOD filtered ===================="
 python -m conformal_human_motion_prediction.examples.simulate_robot_shield \
-  $COMMON --human_set sara --no-mask_ood
+  $COMMON --human_set conformal --mask_ood
 
 echo "==================== Ours without OOD filtered ===================="
 python -m conformal_human_motion_prediction.examples.simulate_robot_shield \
   $COMMON --human_set conformal --no-mask_ood
 
-echo "==================== Ours with OOD filtered ===================="
+echo "==================== ISO 13855 without OOD filtered (SARA, v=2 m/s) ===================="
 python -m conformal_human_motion_prediction.examples.simulate_robot_shield \
-  $COMMON --human_set conformal --mask_ood
+  $COMMON --human_set sara --no-mask_ood
 
 # 6) Build the standalone robot-shield LaTeX table (one row per method).
 python -m conformal_human_motion_prediction.generate_plots.generate_robot_shield_results \
