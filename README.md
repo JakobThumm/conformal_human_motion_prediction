@@ -497,8 +497,11 @@ The full chain, one step per artifact:
 5. **Simulate the robot shield** — `examples.simulate_robot_shield --backend gpu
    --conformal_calibrator <npz> --results_file <cloudpickle> --num_robot_poses 1000000
    --pose_radius 10 --results_csv results/final/robot_shield/shield_results.csv` appends one summary
-   row (headline rates + PFH_D / PL per confidence) per run. Turn the CSV into a LaTeX table with
-   `generate_plots.generate_robot_shield_results`.
+   row (headline rates + PFH_D / PL per confidence) per run — one `pfc_d_*`/`pfh_d_*`/`pl_*`
+   column triple per Clopper-Pearson confidence, at 99 / 99.9 / 99.99 / 99.999 / 99.9999 %. Turn
+   the CSV into a LaTeX table with `generate_plots.generate_robot_shield_results --confidence
+   <level>` (default `0.9999`; the level must be a column in the CSV, so a CSV from an older run
+   has to be regenerated before the deeper levels can be reported).
 
 VSCode launch config *"Simulate Robot Shield"* (settings: OOD threshold `1.5E-5`, set likelihood
 `0.9999`):

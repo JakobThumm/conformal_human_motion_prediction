@@ -87,6 +87,9 @@ from conformal_human_motion_prediction.utils.eval_utils import (
     convert_covariance_matrices_to_set,
     get_too_fast_human_movement,
 )
+from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
+    confidence_tag,
+)
 
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
@@ -132,14 +135,29 @@ def write_results_csv(path, row, fieldnames):
     One row per shield run, keyed by the experiment knobs (set likelihood, pose count, ...), so
     repeated runs at different confidences accumulate into a single table that
     ``generate_plots.generate_robot_shield_results`` turns into a LaTeX table.
+
+    A CSV written before the column set changed (e.g. before a confidence level was added) is
+    rewritten under the union of both headers, so old rows stay aligned with their column names
+    instead of silently picking up the new ones.
     """
     import csv
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    new = not os.path.exists(path)
-    with open(path, "a", newline="") as f:
+    fieldnames = list(fieldnames)
+    old_fields, old_rows = None, []
+    if os.path.exists(path):
+        with open(path, newline="") as f:
+            reader = csv.DictReader(f)
+            old_fields, old_rows = reader.fieldnames, list(reader)
+    if old_fields == fieldnames:
+        with open(path, "a", newline="") as f:
+            csv.DictWriter(f, fieldnames=fieldnames).writerow(row)
+        return
+    if old_fields:
+        fieldnames = old_fields + [k for k in fieldnames if k not in old_fields]
+    with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
-        if new:
-            w.writeheader()
+        w.writeheader()
+        w.writerows(old_rows)
         w.writerow(row)
 
 
@@ -1043,7 +1061,7 @@ def main():
     # has an UNSAFE contact (contact at robot speed > V_ROBOT_ISO). Each (pose, traj, human) trial
     # is one safety-function cycle; we bound the per-cycle failure probability (Clopper-Pearson,
     # one-sided) and convert to PFH_D = PFC_D * 3600 / t_cycle.
-    confidences = [0.99, 0.999, 0.9999]
+    confidences = [0.99, 0.999, 0.9999, 0.99999, 0.999999]
     print("\n============== PFH_D (dangerous failure rate) per ISO 13849-1 ==============")
     print(f"Dangerous failure = verified BUT unsafe contact (speed > V_ROBOT_ISO = {V_ROBOT_ISO} m/s)")
     print(f"Test cycles N = {total_pairs:,}   dangerous failures k = {n_verified_unsafe:,}   "
@@ -1054,7 +1072,7 @@ def main():
     for C in confidences:
         pfc, pfh = pfh_d_upper_bound(total_pairs, n_verified_unsafe, t_cycle, C)
         pfh_by_conf[C] = (pfc, pfh, pl_from_pfh(pfh))
-        print(f"{C:>10.4f} | {pfc:>20.3e} | {pfh:>18.3e} | {pl_from_pfh(pfh)}")
+        print(f"{confidence_tag(C):>10} | {pfc:>20.3e} | {pfh:>18.3e} | {pl_from_pfh(pfh)}")
     print("=" * 76)
 
     # ----------------------------------------------------------------- CSV summary (one row/run)
@@ -1084,7 +1102,7 @@ def main():
         )
         for C in confidences:
             pfc, pfh, pl = pfh_by_conf[C]
-            tag = f"{C:.4f}"
+            tag = confidence_tag(C)
             row[f"pfc_d_{tag}"] = pfc
             row[f"pfh_d_{tag}"] = pfh
             row[f"pl_{tag}"] = pl

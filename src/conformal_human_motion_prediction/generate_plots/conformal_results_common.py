@@ -66,13 +66,31 @@ def read_coverage_by_method(results_dir):
     return out
 
 
+def confidence_tag(confidence):
+    """CSV column suffix for a Clopper-Pearson confidence (``pfh_d_<tag>``/``pl_<tag>``).
+
+    Fixed point with trailing zeros trimmed, but never fewer than 4 decimals, so the historical
+    4-decimal tags stay byte-identical (0.99 -> ``0.9900``) while deeper confidences keep the
+    digits that distinguish them (0.99999 -> ``0.99999``, which ``.4f`` would collapse to 1.0000).
+    """
+    frac = f"{float(confidence):.10f}".split(".")[1].rstrip("0")
+    return f"{float(confidence):.{max(4, len(frac))}f}"
+
+
+def fmt_confidence_percent(confidence):
+    """Confidence as a percentage string: 0.9999 -> ``'99.99'``, 0.999999 -> ``'99.9999'``."""
+    pct = float(confidence) * 100.0
+    frac = f"{pct:.8f}".split(".")[1].rstrip("0")
+    return f"{pct:.{max(2, len(frac))}f}"
+
+
 def read_shield_by_method(csv_path, confidence=0.9999):
     """Read the shield results CSV -> {method_key: row-dict with parsed shield fields}.
 
     ``confidence`` selects which Clopper-Pearson PFH_D / PL columns to surface. If several rows map
     to the same method, the last one wins (fresh sweeps overwrite the CSV, so this is unusual).
     """
-    tag = f"{float(confidence):.4f}"
+    tag = confidence_tag(confidence)
     pfh_key, pl_key = f"pfh_d_{tag}", f"pl_{tag}"
     with open(csv_path, newline="") as f:
         rows = list(csv.DictReader(f))
@@ -82,7 +100,12 @@ def read_shield_by_method(csv_path, confidence=0.9999):
         avail = sorted(k[len("pfh_d_"):] for k in rows[0] if k.startswith("pfh_d_"))
         raise SystemExit(f"confidence {tag} not in {csv_path}; available: {avail}")
     out = {}
+    stale = []
     for r in rows:
+        if not str(r.get(pfh_key, "")).strip():
+            # Row written before this confidence level existed -- its cell is empty, not zero.
+            stale.append(shield_method_key(r))
+            continue
         out[shield_method_key(r)] = {
             "pct_verified": float(r["pct_verified"]),
             "n_verified_unsafe": int(float(r["n_verified_unsafe"])),
@@ -92,6 +115,11 @@ def read_shield_by_method(csv_path, confidence=0.9999):
             "total_pairs": int(float(r["total_pairs"])),
             "t_cycle": float(r["t_cycle"]),
         }
+    if stale and not out:
+        raise SystemExit(f"No row in {csv_path} has confidence {tag} (empty cells for "
+                         f"{sorted(set(stale))}); re-run simulate_robot_shield for those methods.")
+    if stale:
+        print(f"warning: skipping rows without confidence {tag}: {sorted(set(stale))}")
     return out
 
 

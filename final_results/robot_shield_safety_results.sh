@@ -84,4 +84,4 @@ python -m conformal_human_motion_prediction.examples.simulate_robot_shield \
 python -m conformal_human_motion_prediction.generate_plots.generate_robot_shield_results \
   --csv "$CSV" \
   --output results/final/robot_shield/robot_shield_safety.tex \
-  --confidence 0.9999
+  --confidence 0.999999

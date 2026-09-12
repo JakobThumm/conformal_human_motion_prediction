@@ -20,7 +20,8 @@ import argparse
 import os
 
 from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
-    METHODS, METHOD_LABELS, bold, fmt_num, fmt_pl, read_shield_by_method,
+    METHODS, METHOD_LABELS, bold, fmt_confidence_percent, fmt_num, fmt_pl,
+    read_shield_by_method,
 )
 
 
@@ -42,7 +43,7 @@ def generate_shield_table(csv_path, confidence=0.9999):
         r"    \caption{Certification simulation on H36M test data over $N = \num{" + fmt_num(n, 3) + r"}$ "
         r"simulated HRC test cycles ($t_\mathrm{cycle} = " + f"{t_cycle:g}" + r"$ s). "
         r"PFH$_D$ is the one-sided Clopper-Pearson upper bound at confidence "
-        f"${float(confidence) * 100:.2f}\\%$.}}",
+        f"${fmt_confidence_percent(confidence)}\\%$.}}",
         r"    \label{tab:robot_shield_safety}",
         r"    \begin{tabular}{lcccc}",
         r"        \toprule",
