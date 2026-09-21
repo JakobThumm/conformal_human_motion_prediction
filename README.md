@@ -382,15 +382,23 @@ after fitting the calibrator (§2.4):
 ```bash
 bash final_results/motion_prediction_no_uncertainty_no_ood_results.sh     # motion benchmark (MPJPE)
 bash final_results/motion_prediction_conformal_prediction_set_results.sh  # conformal prediction sets (coverage/volume)
-bash final_results/robot_shield_safety_results.sh                         # robot-shield certification (c_safe, PFH_D, PL)
+bash final_results/robot_shield_safety_results_risk_volume.sh             # robot-shield certification (P(F), k_D, PFH_D)
 bash final_results/full_pipeline_ood_handling_evaluation.sh               # full pipeline (sweeps N_req)
 bash final_results/runtime_results.sh                                     # per-stage runtime (ms/step)
-bash final_results/create_full_conformal_prediction_results_table.sh      # combine conformal + shield -> final table
+bash final_results/create_full_conformal_prediction_results_table_risk_volume.sh   # combine conformal + shield -> final table
 ```
 
-The conformal prediction-set and robot-shield scripts each cover all three methods (ISO 13855,
-ours with OOD inputs, ours with OOD filtering); the last script fuses their CSVs into the combined
+The conformal prediction-set and robot-shield scripts each cover the same five methods (ISO 13855,
+ours with $\alpha_{\max}$, ours with OOD inputs, ours with OOD filtering, and the
+no-conformal-prediction ablation); the last script fuses their CSVs into the combined
 `tab:all_conformal_results`. Each script also writes its paper-ready `.tex` under `results/final/`.
+
+> The robot shield is certified with the **volume-weighted** estimator
+> (`examples.simulate_shield_failure_risk_volume`, §3.4). The earlier drivers that counted the rare
+> event directly over ~2e13 dependent test cycles (`robot_shield_safety_results.sh`) and the first
+> factorised estimator (`robot_shield_safety_results_risk.sh`) have been removed; their Python
+> modules (`examples.simulate_robot_shield`, `examples.simulate_shield_failure_risk`) remain, and
+> `simulate_robot_shield` is still the parity reference and the cull-census tool.
 
 **Motion prediction test results** (`motion_prediction_no_uncertainty_no_ood_results.sh`) — MPJPE
 [mm] from ground-truth pose inputs; reports the stage-1 and final models:
@@ -401,25 +409,51 @@ ours with OOD inputs, ours with OOD filtering); the last script fuses their CSVs
 | Ours (final)   | 18.4 | 28.1 | 53.1 | 67.2 |
 
 **Conformal prediction set test results** (`motion_prediction_conformal_prediction_set_results.sh`) —
-predicted pose inputs with input uncertainty; a single test-set evaluation yields all three methods.
+predicted pose inputs with input uncertainty; a single test-set evaluation yields all five methods.
 Volume is the 5/50/95 percentiles of the per-sphere volume (robust to the heavy OOD tail):
 
 | Method | ↑ Coverage (%) | ↓ Vol 5% (m³) | ↓ 50% | ↓ 95% |
 |--------|----------------|---------------|-------|-------|
-| ISO 13855 (no OOD filter) | 99.9193 | 0.017 | 0.687 | 3.252 |
-| Ours (no OOD filter)      | 99.9785 | 0.015 | 0.091 | 0.664 |
-| Ours (OOD filtered)       | **99.9835** | **0.015** | **0.088** | **0.638** |
+| ISO 13855                 | 99.9995 | 0.017 | 0.686 | 3.244 |
+| Ours ($\alpha_{\max}$)     | **99.9999** | 0.072 | 0.413 | 6.352 |
+| Ours with OOD inputs      | 99.9837 | 0.015 | 0.090 | 0.654 |
+| Ours OOD filtered         | 99.9837 | **0.015** | **0.090** | **0.651** |
+| No conformal prediction ($\alpha_{k,\chi}^j$) | 99.3196 | 0.002 | 0.011 | 0.174 |
 
-**Robot-shield certification** (`robot_shield_safety_results.sh`) — three shield runs at
-$N \approx \num{2e13}$ simulated HRC test cycles ($t_\text{cycle}=4$ ms); `c_safe` is the verified
-rate, `c_safe ∧ contact` the dangerous failures, PFH_D the one-sided Clopper-Pearson (99.99%) upper
-bound. See §3.4 for the workflow:
+> The no-conformal-prediction ablation has the smallest sets but no coverage guarantee, so it is
+> excluded from the "best" marks. OOD filtering changes coverage by less than 1e-4 pp and volume by
+> ~0.3 % here: before the frozen-pose data fix (see `docs/RESULTS.md`) the gap looked like 32 %, but
+> that was the corrupt windows the OOD filter happened to catch, and the dataset now drops them
+> upstream for every row.
 
-| Method | ↑ c_safe (%) | ↓ c_safe ∧ contact | ↓ PFH_D (1/h) | PL |
-|--------|--------------|--------------------|---------------|-----|
-| ISO 13855 (no OOD filter) | 98.91 | 12,206,306 | 5.50e-1 | none |
-| Ours (no OOD filter)      | 99.21 | 2 | 6.27e-7 | PL d |
-| Ours (OOD filtered)       | **99.23** | **0** | **4.14e-7** | **PL d** |
+**Robot-shield certification** (`robot_shield_safety_results_risk_volume.sh`) — the
+volume-weighted estimator, which factorises the rare event instead of counting it over dependent
+cycles (§3.4):
+
+```
+PFH_D <= N_h * P(F) * [V(W)/V(F)] * P(D | F, W)
+```
+
+with `N_h = 3600 / t_cycle = 9e5` verification cycles per operating hour, `P(F)` the one-sided
+Clopper-Pearson upper limit on the prediction-failure probability (deflated to
+`n_eff = N_F / (2 L_corr)` for window overlap), `V(W)/V(F)` the closed-form witness-region volume
+ratio, and `k_D` the dangerous trials among `N_W = 4e9` i.i.d. trials drawn from `W`. The bound
+holds at joint confidence 99.999 %:
+
+| Method | ↓ P(F) | V(W)/V(F) | ↓ k_D | ↓ PFH_D (1/h) | PL |
+|--------|--------|-----------|-------|---------------|-----|
+| ISO 13855                 | 2.87e-3 | 2.06e-2 | **0** | 1.62e-7 | PL d |
+| Ours ($\alpha_{\max}$)     | **4.62e-4** | 1.50e-2 | **0** | **1.91e-8** | **PL e** |
+| Ours with OOD inputs      | 1.30e-2 | 1.51e-2 | 4 | 9.48e-7 | PL d |
+| Ours OOD filtered         | 1.30e-2 | 1.51e-2 | 4 | 9.50e-7 | PL d |
+| No conformal prediction ($\alpha_{k,\chi}^j$) | 1.80e-1 | 1.56e-2 | 24,722 | 1.61e-2 | none |
+
+> `N_W = 4e9` is what is *drawn*; because the trials come from `W` and the volume ratio carries the
+> rest, that is worth `N_D = N_W / P(W|F) ≈ 2.6e11` uniform placements per row (the run prints
+> both). Only the no-conformal-prediction ablation exceeds the 1e-6 PL d line. The "Ours OOD
+> filtered" bound sits 5 % under it with `k_D = 4`, so it is tight: `k_D = 5` would cross. The CP
+> tail at `k_D = 4` inflates the bound 1.76x over the point estimate, and `N_W = 4e10` would give
+> ~3.3e-7 (3x margin) — budget that if the margin matters.
 
 **Full pipeline evaluation** (`full_pipeline_ood_handling_evaluation.sh`) — sweeps `N_req`, the number
 of correct poses required before triggering motion prediction:
@@ -453,15 +487,23 @@ just-in-time compilation costs 10–15 s per stage and does not recur:
 > `measured_wall` row — the independent end-to-end wall clock per step (69.67 ms here). It should
 > sit a few ms above the stage sum; a large gap means the per-stage synchronisation is wrong.
 
-**Combined final results table** (`create_full_conformal_prediction_results_table.sh`,
-`tab:all_conformal_results`) — coverage reported as miss-rate ($1-p_\text{cov}$) and nines of
-reliability ($-\log_{10}$ miss-rate):
+**Combined final results table** (`create_full_conformal_prediction_results_table_risk_volume.sh`,
+`tab:all_conformal_results`) — fuses the two halves above. Coverage is reported as miss-rate
+($1-p_\text{cov}$) and nines of reliability ($-\log_{10}$ miss-rate):
 
-| Method | ↓ Miss-rate | ↑ 9s of rel. | Vol 5% | 50% | 95% | ↑ c_safe (%) | ↓ ∧ contact | ↓ PFH_D (1/h) | PL |
-|--------|-------------|--------------|--------|-----|-----|--------------|-------------|---------------|-----|
-| ISO 13855            | 8.1e-4 | 3.09 | 0.017 | 0.687 | 3.252 | 98.91 | 1.2e7 | 5.50e-1 | none |
-| Ours with OOD inputs | 2.1e-4 | 3.67 | 0.015 | 0.091 | 0.664 | 99.21 | 2 | 6.27e-7 | PL d |
-| Ours OOD filtered    | **1.6e-4** | **3.80** | **0.015** | **0.088** | **0.638** | **99.23** | **0** | **4.14e-7** | **PL d** |
+| Method | ↓ Miss rate | ↑ Nines of rel. | Vol 5% | 50% | 95% | ↓ P(F) | ↓ k_D | ↓ PFH_D (1/h) |
+|--------|-------------|-----------------|--------|-----|-----|--------|-------|---------------|
+| ISO 13855                 | 5.0e-6 | 5.30 | 0.017 | 0.686 | 3.244 | 2.87e-3 | **0** | 1.62e-7 |
+| Ours ($\alpha_{\max}$)     | **1.0e-6** | **6.00** | 0.072 | 0.413 | 6.352 | **4.62e-4** | **0** | **1.91e-8** |
+| Ours with OOD inputs      | 1.6e-4 | 3.79 | 0.015 | 0.090 | 0.654 | 1.30e-2 | 4 | 9.48e-7 |
+| Ours OOD filtered         | 1.6e-4 | 3.79 | **0.015** | **0.090** | **0.651** | 1.30e-2 | 4 | 9.50e-7 |
+| No conformal prediction ($\alpha_{k,\chi}^j$) | 6.8e-3 | 2.17 | 0.002 | 0.011 | 0.174 | 1.80e-1 | 24,722 | 1.61e-2 |
+
+The generator also prints, per row, the factors behind `PFH_D` (`N_F`, `k_F`, `L_corr`, `n_eff`,
+`N_W`, `N_D = N_W/P(W|F)`) plus the run constants the short caption omits — state `N_W`, `N_h` and
+the confidence in the text, since `k_D` has no meaning without its denominator. The
+no-conformal-prediction row is rendered below a rule and excluded from the "best" marks, and a
+`PFH_D` above the 1e-6 line is coloured red (needs `xcolor`; `\unit{...}` needs `siunitx`).
 
 The paper-ready LaTeX for every table above is written under `results/final/` (e.g.
 `results/final/all_conformal_results.tex`).
@@ -599,96 +641,122 @@ VSCode launch config *"Simulate Robot Shield"* (settings: OOD threshold `1.5E-5`
 
 For the paper table set a target cycle count with `--n_test_cycles 2e13` (the script derives
 `--num_robot_poses`) and select the human occupancy model with `--human_set {conformal,sara}`
-(`sara` = the ISO 13855 constant-velocity reachable set); the three rows differ by `--human_set`
-and `--mask_ood`.
+(`sara` = the ISO 13855 constant-velocity reachable set); the method rows differ by `--human_set`,
+`--conformal_calibrator` and `--mask_ood`.
 
-Steps 2–5 (plus the LaTeX table for all three methods) are scripted in
-[`final_results/robot_shield_safety_results.sh`](final_results/robot_shield_safety_results.sh)
-(prerequisites: step 1 + the motion OOD score function). The shield runs the fine-phase
-intersection checks on the GPU (`--backend gpu`); levels 1–3 of the bounding-sphere culling stay on
-the CPU. `--backend cpu --num_workers N` is the reference path. Verify the two agree with
-`--parity N`.
+This direct-counting path is **no longer the certified one** — see the volume-weighted estimator
+below, which `final_results/robot_shield_safety_results_risk_volume.sh` drives — but
+`simulate_robot_shield` remains the parity reference for the per-trial kernel and the tool behind
+the cull census. It runs the fine-phase intersection checks on the GPU (`--backend gpu`); levels
+1–3 of the bounding-sphere culling stay on the CPU. `--backend cpu --num_workers N` is the
+reference path. Verify the two agree with `--parity N`.
 
-#### Factorised failure-risk estimate (`examples.simulate_shield_failure_risk`)
+#### Certified estimate: volume-weighted placement sampling (`examples.simulate_shield_failure_risk_volume`)
 
-The shield simulation above counts the rare event directly, so its Clopper-Pearson bound treats
-~2e13 (placement, trajectory, window) cycles as independent trials — they are not: the same ~6e4
-recorded windows are reused ~1e8 times. `examples.simulate_shield_failure_risk` estimates the same
-quantity without that assumption, by **factorising** the event instead of counting it:
+This is the estimator behind the paper's PFH_D column, driven by
+[`final_results/robot_shield_safety_results_risk_volume.sh`](final_results/robot_shield_safety_results_risk_volume.sh).
+
+The direct count above treats ~2e13 (placement, trajectory, window) cycles as independent trials —
+they are not: the same ~6e4 recorded windows are reused ~1e8 times. This script never counts the
+rare event over dependent cycles. It factorises it over three events, all per verification cycle:
+
+* **F** — prediction failure: the true occupancy escapes the predicted set
+  (`||true_c - pred_c|| + true_r - pred_r > 0`) at some horizon step and joint.
+* **D** — dangerous failure: a contact although the shield verified. Because the predicted sets
+  over-approximate the truth, `D => F`.
+* **W** — the *witness region*: the placements at which the robot's swept occupancy can reach the
+  human at all. It is the shield's own level-4 bounding-sphere test, i.e. a necessary condition for
+  contact, so `D => W`.
 
 ```
-lambda_d [1/h] = lambda_f * E_f[ P(d | f) ]
+PFH_D <= N_h * P(F) * [V(W)/V(F)] * P(D | F, W),        N_h = 3600 s / t_cycle
 ```
 
-A dangerous failure needs both a prediction failure *f* (the true human occupancy escapes the
-predicted set: `||true_c - pred_c|| + true_r - pred_r > 0` at some horizon step and joint) and that
-failure turning into a verified-but-unsafe contact *d*. The split is exact because
-`verified AND contact => the truth left the predicted set` — the shield can only be fooled inside
-the failure set. `--verify_lemma N` tests that lemma empirically by replaying *non*-failure windows
-and asserting zero verified-and-contact events.
+A **trial** is one verification cycle: a triple of a failing window, a phase of the long-horizon
+robot trajectory, and a base placement. All three are independent and uniform under the reference
+measure, so:
 
-The two factors have completely different error budgets:
+* `P(F)` is measured on the recorded windows. The point estimate is `k_F / N_F` over *every*
+  window; the dependence between overlapping windows enters the **interval**, not the estimate, via
+  `n_eff = N_F / (2 L_corr)` with `L_corr` the integrated autocorrelation time of the failure
+  indicator (Sokal windowing; `--l_corr` overrides) and the 2 the loader's two 25 fps phase
+  offsets. Data-limited.
+* `V(W)/V(F)` is **closed form**, not estimated — no Monte-Carlo error enters it. Yaw only
+  translates the level-4 ball inside the placement disk and leaves its z-offset alone, so the
+  slab-truncated volume is yaw-independent and integrates analytically. The trials can therefore be
+  drawn *exactly* from the uniform-on-`W` conditional.
+* `P(D | F, W)` is compute-limited, and because the trials really are i.i.d. draws its
+  Clopper-Pearson bound is **exact** — not the cluster-collapsed "was ANY window dangerous at this
+  placement?" bound the direct count is forced into.
 
-* `lambda_f` — failure **episodes** per operating hour, measured from the recorded data (hundreds
-  of events). The per-window indicator is a duty cycle, so the rate is rebuilt at the deployment
-  cadence: `lambda_f = p_hat * fps * 3600 / L`, with `p_hat` from windows sub-sampled by
-  `--failure_stride` (adjacent windows are the same physical event — the indicator's lag-1
-  autocorrelation is ~0.57, gone by lag 5) and `L` = mean failure-episode length from the run-length
-  distribution (~2.3 windows = 93 ms on validation). Reported both declustered and with the
-  conservative `L = 1` (which over-counts episodes ~L-fold, hence an upper bound).
-* `P(d | f_i)` — obtained by replaying **only the failing windows** against `--num_robot_poses`
-  random placements (same 10 m disk / yaw / z sampling, same level 1–5 culling, same GPU backend).
-  This is a Monte-Carlo integral over a placement distribution *we choose*, so its precision is
-  limited by compute, not by data, and it contributes no statistical error.
+Both factors are one-sided Clopper-Pearson upper limits holding jointly at
+`(1-eps_F)(1-eps_{D|F}) = 1 - --epsilon_d` (default 1e-5), split symmetrically.
 
-Composition is reported as a 2x2 table (declustered vs `L = 1`, average vs worst placement), each
-inverted into an **exposure budget** `1e-6 / lambda_d` — the share of an operating hour with a human
-in the workspace that still meets PL d. A bootstrap over the observed failure set gives the 95 %
-interval and 99 % upper limit (it captures *which* failures were observed, not between-subject
-variability — H36M has one subject per split). Because the placements really are i.i.d. draws, a
-binomial upper bound over placements is also printed; that bound is what carries the result when the
-brute force sees zero dangerous events, i.e. when the point estimate is below the grid resolution
-`1/(placements x trajectories)`.
+**`N_W` is not `N_D`.** `--num_trials` sets `N_W`, the number of trials drawn *from* `W`; the
+Clopper-Pearson interval bounds the conditional `P(D | F, W)` and the volume ratio supplies the
+rest. The equivalent uniform-placement count is `N_D = N_W / P(W|F)`, which the run prints — on
+H36M `N_W = 4e9` is worth `N_D ≈ 2.6e11`. Both routes give the identical bound, because `D => W`
+means a dangerous uniform draw always lands in `W`.
+
+The level-5 test (per robot-link sphere vs. per human-body sphere) refines `W` **for free**: a
+trial it rejects provably has no contact, so it is scored 0 for 91 distance tests instead of the
+full capsule kernel, still counts in `N_W`, and needs no extra statistics. It resolves ~74 % of
+trials on H36M.
 
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false python -u -m \
-  conformal_human_motion_prediction.examples.simulate_shield_failure_risk \
-  --results_file results/motion_prediction/motion_prediction_results_validation.cloudpickle \
+  conformal_human_motion_prediction.examples.simulate_shield_failure_risk_volume \
+  --results_file results/motion_prediction/motion_prediction_results_test.cloudpickle \
   --conformal_calibrator models/motion_prediction/conformal_calibration/conformal_calibrator.npz \
-  --backend gpu --human_set conformal --no-mask_ood --pose_radius 10.0 --num_robot_poses 200000 \
-  --verify_lemma 500 --results_csv results/final/robot_shield/failure_risk.csv
+  --backend gpu --human_set conformal --mask_ood --pose_radius 10.0 \
+  --num_trials 4000000000 --results_csv results/final/robot_shield_risk_volume/shield_risk_volume_results.csv
 ```
 
 The knobs mirror `simulate_robot_shield` (`--human_set {conformal,sara}`, `--mask_ood`,
-`--conformal_calibrator`, `--backend`, ...) so all three predicted-set variants are evaluated by the
-same script; `--max_failures_eval` shrinks the failure set for smoke runs and `--save_per_failure
-<path.npz>` dumps the per-failure escape size and `P(d|f_i)`. One CSV row per run, header-migrating
-like the shield CSV.
+`--conformal_calibrator`, `--backend`, ...), so all five predicted-set variants come from the same
+script; `--max_failures_eval` shrinks the failure set for smoke runs and `--save_trials <path.npz>`
+dumps the per-(window, trajectory) volume weights and the dangerous trials. One header-migrating
+CSV row per run. `--robot_stride 1` is the default here and costs nothing: a trial uses **one**
+trajectory phase, so the full 4 ms grid (2358 phases) is the honest phase distribution.
 
-**Throughput.** The placement bound tightens as `1/--num_robot_poses`, so the useful runs are large
-(1e8–1e9 placements) and the loop is dispatch-bound, not compute-bound:
+**Self-tests** — all three are cheap on this kernel and the driver runs them once, in float64,
+before the five methods (`SELF_TESTS=0` to skip):
 
-* Levels 1–3 are gated for a whole block of 100k placements at once
-  (`simulate_robot_shield.pose_active_sets_batched`), and the ~88 % of placements the robot cannot
-  reach at all are accounted for in bulk — that part now costs nothing measurable.
-* `--gpu_a_chunk` (default 128) sets the width every GPU launch is padded to. The run prints the
-  observed active-motion count per surviving placement (median 24 / mean 89 / p95 271 on the
-  validation failure set) and suggests the nearest power of two to 1.5× the mean; it must be
-  re-tuned when the failure count changes, because both padding waste (chunk ≫ mean) and launch
-  overhead (chunk ≪ mean) cost throughput.
-* `--shards N` splits the placements over N worker **subprocesses** (not `fork` — the parent has
-  already initialised CUDA), each with an independent placement stream, its own log under
-  `--shard_dir` and a raw-count `.npz`. The launcher asserts every shard priced the same failure
-  set (a digest of the failure-window indices), pools the counts — additive for counts, `max` for
-  the sup-over-placements, and `lambda_f` / the duty cycle computed once because they do not depend
-  on placements — and reports once. A single progress bar is driven by the workers' progress files.
-  Measured on one RTX 5090: a single process leaves the GPU ~64 % idle, `--shards 4` saturates it
-  (~97 % utilisation), and beyond that there is nothing left to win, so **`--shards 4` is the
-  recommendation** (~16,700 placements/s; ~6.9 h for 4.1e8 placements).
+* `--parity N` — the per-trial kernel vs. `run_pose_pure` over every (window, trajectory) pair.
+  Zero-tolerance on the verified-but-contact *set*; the aggregate counts get a small tolerance
+  because at `--gpu_dtype float32` a pair within ~1e-6 m of exact tangency can land either side of
+  the `<=` (float32 flips ~3e-5 of them, float64 none).
+* `--verify_gate N` — draws from the *full* trial space and asserts no **contact** falls outside
+  `W`. Contact, not the far rarer dangerous event, is what `W` brackets (`D => contact => W`), so
+  this exercises the implication with ~1e4 events per 1e6 trials.
+* `--verify_lemma N` — draws on *non-failure* windows (from their own `W`, the most sensitive place
+  to look) and asserts zero verified-and-contact, i.e. `D => F`.
 
-Per-placement bookkeeping is online throughout (running max, counters, a coarse histogram and the
-first 1000 non-zero placements), so a 4e8-placement run holds nothing that scales with the
-placement count; placements themselves are drawn in 1e6 blocks for the same reason.
+**Throughput.** Measured on one RTX 5090: ~4.5e6 trials/s, i.e. ~3e8 equivalent uniform placements
+per second, against ~7e3 placements/s for the direct count — about four orders of magnitude. The
+4e9-trial production run takes ~15 min per method. The run is bound by the host-side sampler, not
+the GPU, so `--kernel_batch` is flat from 4k to 64k.
+
+**Sizing.** With zero dangerous trials, `P_up(D|F,W) ≈ ln(1/eps) / N_W`, so a target PFH_D needs
+`N_W >= N_h * P_up(F) * P(W|F) * ln(1/eps) / target` — ~2.2e9 for 1e-6 on H36M, hence the 4e9
+default. That formula only holds at `k_D = 0`: the production run observed `k_D = 4`, the CP tail
+at k=4 is 1.76x the zero-event one, and it consumed the whole margin (realised bound 9.50e-7, 5 %
+under the line). Once events appear, `k_D` grows with `N_W` and the bound converges to the point
+estimate rather than falling as `1/N_W` (4e9 → 9.5e-7, 4e10 → 3.3e-7, asymptote ~1.8e-7).
+
+**Caveat.** `V(W)/V(F)` is exact *for the placement distribution chosen here* (area-uniform in a
+`--pose_radius` disk, random yaw, random trajectory phase) and scales as `1/pose_radius^2`. It is a
+modelling input that must mirror the expected HRC cell, not a free parameter.
+
+#### Superseded: first factorised estimate (`examples.simulate_shield_failure_risk`)
+
+The module is still in the tree but no longer drives any results script. It factorises the same
+event as `lambda_d = lambda_f * E_f[P(d | f)]` and shares the `P(F)` machinery (`L_corr`, `n_eff`,
+the Clopper-Pearson helpers) with the volume estimator, which imports them from it so the two
+cannot drift. Its placement integral is a rejection sampler over the full disk, and because one
+placement is applied to all failing windows x trajectories, its trials are a *cluster* — so its
+`P(D|F)` bound has to collapse a placement to "was ANY window dangerous here?", costing orders of
+magnitude of resolution. The volume estimator removes both losses; prefer it.
 
 ---
 

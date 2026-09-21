@@ -476,7 +476,7 @@
       },
       "args": [
         // 4 ms robot CSV (--robot_csv) and --robot_stride 25 are the defaults.
-        "--results_file", "results/motion_prediction/motion_prediction_results_test.cloudpickle",
+        "--results_file", "results/motion_prediction/motion_prediction_results_validation.cloudpickle",
         "--num_robot_poses", "4000000",   // ~4E6 needed for PL_D
         "--pose_radius", "10.0",
         "--pose_z_offset", "0.2",
@@ -489,7 +489,7 @@
         // it no longer fits. Tune to the GPU you have:
         //   * FREE GPU            -> "512" (or "1024"): fastest steady-state (~0.25 s/active pose).
         //   * SHARED/CONTESTED GPU-> "128": fits in ~1-2 GB free VRAM; a touch slower, larger never OOMs.
-        "--gpu_a_chunk", "128",
+        "--gpu_a_chunk", "512",
         // Per-instance failure-geometry dump -- works on BOTH backends (the GPU flags the rare
         // verified-but-contact pairs; the CPU rebuilds their geometry). --max_failures caps per pose.
         "--save_failures", "results/motion_prediction/shield_failures.npy", "--max_failures", "200",
