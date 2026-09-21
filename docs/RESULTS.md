@@ -877,6 +877,40 @@ mechanism: the reduction is good, the *objective* is the wrong one for OOD detec
 - The `ReducedOutput*` dataset dispatch does not forward `max_target_speed`, so these datasets apply the
   2.0 m/s filter that the model's own training disabled. Pre-existing and shared by all arms.
 
+### Operating points of the two deployed detectors
+
+AUROC measures separability over all thresholds; the pipeline runs at one fixed threshold, so the
+table below reports both. OOD is the positive class (a sample is flagged when its score exceeds
+`OOD_THRESHOLD`), so TPR is the rate of OOD inputs caught, FNR the rate that slips through, and FPR
+the false-alarm rate on in-distribution inputs. Reproduce with
+`examples/id_vs_ood_pose_prediction.py` / `examples/id_vs_ood_motion_prediction.py`; both write the
+metrics JSON that feeds the OOD-detection table in
+`results/final/conformal_prediction_sets/conformal_prediction_set_results.tex`.
+
+| detector | ID set | OOD set | AUROC | tau | TPR | FPR | TNR | FNR |
+|---|---|---|---|---|---|---|---|---|
+| pose (`jax_resnet18_regressflow_3joints_score_fn`) | H36M validation, 500 detected frames | tiger-pose train+val, 263 images | 0.9976 | 0.2 | 52.85 % | 0.00 % | 100.00 % | 47.15 % |
+| motion (`dct_pose_transformer_randproj_score_fn`) | H36M validation (S11), 10 000 windows | same windows, inputs permuted in time, 10 000 | 0.9858 | 0.5 | 78.65 % | 0.25 % | 99.75 % | 21.35 % |
+
+Both thresholds sit deliberately far out in the ID tail, which is why the TPRs are well below what
+the near-perfect AUROCs suggest. The two errors are not symmetric in the pipeline: a false alarm
+discards a perfectly good prediction (the shield falls back to its conservative set), while a missed
+OOD input leaves the conformal set trusted on an input it was not calibrated for. Both thresholds
+are currently set to make the first error essentially never happen. Concretely:
+
+- **Pose, tau = 0.2**: the ID scores reach p99.99 = 0.142, so no in-distribution frame of the 500
+  crosses it (FPR 0/500), while the tiger median score is 0.211 — just above the threshold, hence
+  TPR 52.85 % despite AUROC 0.9976. Measured alternatives on the same scores: tau = 0.140 (ID
+  p99.9) gives TPR 73.4 % at FPR 0.20 %, tau = 0.055 (ID p99) gives TPR 95.4 % at FPR 1.0 %, and
+  tau = 0.010 (ID p95) catches every tiger image at FPR 5.0 %.
+- **Motion, tau = 0.5**: 25 of 10 000 ID windows cross it (FPR 0.25 %) and 78.65 % of time-permuted
+  windows do. This is the same score function and evaluation set as the readout-head table above,
+  so the AUROC matches it exactly (0.98576).
+
+The pose row is measured on the frames where YOLO actually detected a human: frames with no
+detection produce no pose and no OOD score at all (20 of the 520 frames walked), so they are
+skipped rather than scored as in-distribution.
+
 ## Full Evaluation Pipeline
 
 ### Action = Directions, 1 Sequence
@@ -2911,7 +2945,7 @@ Saved table to results/final/robot_shield/robot_shield_safety.tex
         \toprule
         \textbf{Method} & $\uparrow$ $c_{\text{safe}}$ (\%) & $\downarrow$ $c_{\text{safe}} \land \text{contact}$ & $\downarrow$ PFH$_D$ (1/h) & PL \\
         \midrule
-        ISO 13855~\cite{iso_2010_SafetyMachinery} without OOD filtered & 98.91 & 12,206,306 & \num{1.49e-1} & none \\
+        ISO 13855~\cite{iso_2010_SafetyMachinery} without OOD filtered & 98.91 & 12,206,306 & \num{5.50e-1} & none \\
         Ours without OOD filtered & 99.21 & 2 & \num{6.27e-7} & PL d \\
         Ours with OOD filtered & \textbf{99.23} & \textbf{0} & \textbf{\num{4.14e-7}} & \textbf{PL d} \\
         \bottomrule
@@ -2929,19 +2963,45 @@ not durations. Shares are over robot base poses drawn area-uniformly in a 10 m d
 the recorded human activity (yaw uniform, z +/-0.2 m) -- the same distribution the
 certification runs use.
 
+## Levels 1 and 3 -- from the certification runs themselves
+
+`final_results/robot_shield_safety_results.sh` (2026-09-12 re-run: random-projection OOD head,
+`OOD_THRESHOLD = 0.5`, N = 2e13 cycles, t_cycle = 4 ms, 10 m pose disk) records both levels per run,
+so these are exact over all 3.5 M poses rather than sub-sampled:
+
+| Method | M | poses | L1 per pose | **L3 per cycle** | **L3 min/h** |
+|---|---|---|---|---|---|
+| ISO 13855 without OOD filtered | 59,824 | 3,519,095 | 72.01 % | **4.663 %** | **2.798** |
+| Ours without OOD filtered | 59,824 | 3,519,095 | 57.95 % | **3.919 %** | **2.351** |
+| Ours with OOD filtered | 59,217 | 3,555,167 | 19.28 % | **3.887 %** | **2.332** |
+
+Level-3 is what the deployed pipeline quotes:
+
+> For a robot base placed uniformly at random within 10 m of the recorded human activity,
+> the human is inside the robot's swept workspace in 3.89 % of safety cycles -- 2.33
+> minutes per operating hour.
+
+(`Level-3 active (pose, human) pairs` in the run summary; `n_l3_active` / `pct_l3_active` /
+`min_per_hour_l3_active` in the results CSV.)
+
+## All levels -- census run
+
+Levels 2, 4 and 5 are not recorded by a normal run (4-5 are not even counted on the GPU backend),
+so they come from a census:
+
 ```bash
 python -m conformal_human_motion_prediction.examples.simulate_robot_shield \
   --results_file results/motion_prediction/motion_prediction_results_test.cloudpickle \
   --conformal_calibrator models/motion_prediction/conformal_calibration/conformal_calibrator.npz \
   --backend cpu --pose_radius 10.0 --pose_z_offset 0.2 --robot_stride 25 --seed 0 \
-  --human_set conformal --mask_ood --ood_threshold 3e5 \
+  --human_set conformal --mask_ood \
   --cull_census 50000 --cull_census_fine 500
 ```
 
-(`--ood_threshold 3e5` because the stored results files carry fixed-joints-head OOD scores;
-the settings default `0.35` belongs to the random-projection head. The level-1 shares below
-reproduce `n_poses_skipped` from the 3.5-3.7 M-pose certification runs: 71.95 / 57.71 /
-17.13 % here vs 72.01 / 57.94 / 16.98 % there.)
+The census below predates the 2026-09-12 re-prediction, so its OOD-filtered row used the legacy
+fixed-joints head (`--ood_threshold 3e5`, M = 57,231); the other two rows are unaffected by the OOD
+head. Its level-1 shares reproduce `n_poses_skipped` from the certification runs (71.95 / 57.71 %
+here vs 72.01 / 57.94 % there), which is the check that the census pose sampling matches.
 
 | Method | L1 per pose | L2 pose x group | **L3 per cycle** | **L3 min/h** | L4 pred | L5 pred | L4 true | L5 true | L5 true min/h |
 |---|---|---|---|---|---|---|---|---|---|
@@ -2952,15 +3012,7 @@ reproduce `n_poses_skipped` from the 3.5-3.7 M-pose certification runs: 71.95 / 
 Levels 1-3: 50,000 poses. Levels 4-5: the first 500 of them (they loop over all 95
 trajectories); on that sub-sample the level-1 rates are 69.2 / 52.4 / 14.6 %, i.e. ~5 % low
 relative to the 50,000-pose estimate, so the level-4/5 shares are low by about the same
-factor. Level-3 is what the deployed pipeline quotes:
-
-> For a robot base placed uniformly at random within 10 m of the recorded human activity,
-> the human is inside the robot's swept workspace in 3.87 % of safety cycles -- 2.32
-> minutes per operating hour.
-
-A normal shield run records this level-3 number too (`Level-3 active (pose, human) pairs`
-in the summary; `n_l3_active` / `pct_l3_active` / `min_per_hour_l3_active` in the results
-CSV), so it no longer needs a separate census run.
+factor. Use the table above for levels 1 and 3.
 
 
 # New Pipeline Results
@@ -2996,7 +3048,7 @@ Our results in~\cref{tab:full_pipeline_results} show that our OOD pipeline reduc
         \cmidrule(lr){2-3} \cmidrule(lr){4-6}
          & $\downarrow$ Miss-rate & $\uparrow$ 9s of reliability & 5\% & 50\% & 95\% & & & & \\
         \midrule
-        ISO 13855 & \num{8.1e-4} & 3.09 & 0.017 & 0.687 & 3.252 & 98.91 & \num{1.2e7} & \num{1.49e-1} & none \\
+        ISO 13855 & \num{8.1e-4} & 3.09 & 0.017 & 0.687 & 3.252 & 98.91 & \num{1.2e7} & \num{5.50e-1} & none \\
         Ours with OOD inputs & \num{2.1e-4} & 3.67 & 0.015 & 0.091 & 0.664 & 99.21 & 2 & \num{6.27e-7} & PL d \\
         Ours OOD filtered & $\mathbf{1.6 \times 10^{-4}}$ & \textbf{3.80} & \textbf{0.015} & \textbf{0.088} & \textbf{0.638} & \textbf{99.23} & \textbf{0} & $\mathbf{4.14 \times 10^{-7}}$ & \textbf{PL d} \\
         \bottomrule

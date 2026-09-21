@@ -1,10 +1,14 @@
-"""Standalone robot-shield safety table for the three methods.
+"""Standalone robot-shield safety table, one row per method.
 
 Each CSV row (from ``examples.simulate_robot_shield --results_csv``) is one shield run; the run's
-method is derived from (human_set, mask_ood):
-  * human_set=sara                     -> ISO 13855 without OOD filtered
-  * human_set=conformal, mask_ood=off  -> Ours without OOD filtered
-  * human_set=conformal, mask_ood=on   -> Ours with OOD filtered
+method is derived from (human_set, set_kind, mask_ood):
+  * human_set=sara                                             -> ISO 13855 without OOD filtered
+  * human_set=conformal, mask_ood=off                          -> Ours without OOD filtered
+  * human_set=conformal, mask_ood=on                           -> Ours with OOD filtered
+  * human_set=conformal, set_kind=max_conformal, mask_ood=off  -> Ours (alpha_max ablation), no OOD filter
+  * human_set=conformal, set_kind=max_conformal, mask_ood=on   -> Ours (alpha_max ablation), OOD filtered
+  * human_set=conformal, set_kind=uncalibrated, mask_ood=off   -> Ours (no-calib. ablation), no OOD filter
+  * human_set=conformal, set_kind=uncalibrated, mask_ood=on    -> Ours (no-calib. ablation), OOD filtered
 
 The table reports, per method, how often the shield verified the monitored trajectory as safe
 (c_safe), the number of contacts despite a verified trajectory (c_safe & contact), and the ISO
@@ -20,14 +24,15 @@ import argparse
 import os
 
 from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
-    METHODS, METHOD_LABELS, bold, fmt_confidence_percent, fmt_num, fmt_pl,
+    METHODS, prune_to_methods, select_methods, METHOD_LABELS, bold, fmt_confidence_percent, fmt_num, fmt_pl,
     read_shield_by_method,
 )
 
 
-def generate_shield_table(csv_path, confidence=0.9999):
+def generate_shield_table(csv_path, confidence=0.9999, methods="all"):
     """Build the LaTeX shield table string from a shield results CSV (one row per method)."""
-    shield = read_shield_by_method(csv_path, confidence)
+    shield = prune_to_methods(read_shield_by_method(csv_path, confidence),
+                              select_methods(methods))
     present = [m for m in METHODS if m in shield]
     if not present:
         raise SystemExit(f"No recognized method rows in {csv_path}")
@@ -42,7 +47,9 @@ def generate_shield_table(csv_path, confidence=0.9999):
         r"    \centering",
         r"    \caption{Certification simulation on H36M test data over $N = \num{" + fmt_num(n, 3) + r"}$ "
         r"simulated HRC test cycles ($t_\mathrm{cycle} = " + f"{t_cycle:g}" + r"$ s). "
-        r"PFH$_D$ is the one-sided Clopper-Pearson upper bound at confidence "
+        r"A dangerous failure is a contact despite the shield verifying the monitored trajectory "
+        r"as safe ($c_{\text{safe}} \land \text{contact}$); PFH$_D$ is the one-sided "
+        r"Clopper-Pearson upper bound on its rate at confidence "
         f"${fmt_confidence_percent(confidence)}\\%$.}}",
         r"    \label{tab:robot_shield_safety}",
         r"    \begin{tabular}{lcccc}",
@@ -69,13 +76,16 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--csv", default="results/final/robot_shield/shield_results.csv",
                    help="Shield results CSV written by simulate_robot_shield --results_csv.")
+    p.add_argument("--methods", default="all",
+                   help="Method rows to include: 'all' (default) or a comma/space separated list of method keys (see METHODS in conformal_results_common).")
     p.add_argument("--output", default=None,
                    help="Output .tex path (default: alongside the CSV as <stem>.tex).")
     p.add_argument("--confidence", type=float, default=0.9999,
                    help="Which Clopper-Pearson confidence column to report (must be in the CSV).")
     args = p.parse_args()
 
-    table = generate_shield_table(args.csv, confidence=args.confidence)
+    table = generate_shield_table(args.csv, confidence=args.confidence,
+                                  methods=args.methods)
     out = args.output or os.path.splitext(args.csv)[0] + ".tex"
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     with open(out, "w") as f:

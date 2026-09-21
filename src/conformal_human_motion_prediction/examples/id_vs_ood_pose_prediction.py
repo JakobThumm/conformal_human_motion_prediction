@@ -15,6 +15,7 @@ Based on pose_estimation_2D.py but adapted for comparative evaluation.
 
 import os
 import argparse
+import cloudpickle
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -40,7 +41,10 @@ from conformal_human_motion_prediction.utils.pose_metrics import (
 )
 from conformal_human_motion_prediction.utils.visualization import plot_ood_score_histogram
 from conformal_human_motion_prediction.utils.eval_utils import (
+    compute_ood_detection_metrics,
+    print_ood_detection_metrics,
     print_ood_score_percentiles,
+    save_ood_detection_metrics,
     save_ood_score_percentiles,
 )
 from conformal_human_motion_prediction.pose_estimation.h36m_settings import (
@@ -301,9 +305,17 @@ def evaluate_pose_prediction_accuracy(predictions, ground_truth, valid_mask, thr
 
 def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, human_detector, device_torch,
                                   dataset, dataset_name, max_samples=None,
-                                  score_fn=None, ood_threshold=POSE_OOD_THRESHOLD):
+                                  score_fn=None, ood_threshold=POSE_OOD_THRESHOLD,
+                                  max_sequences=1, max_frames_per_sequence=10):
     """
     Run pose prediction on H36M dataset using the same approach as pose_estimation_2D.py.
+
+    Args:
+        max_samples: Stop after this many frames in total (None = no limit).
+        max_sequences: Number of H36M sequences to walk (None = all). One sequence covers a single
+            subject/action/camera, so a single sequence is fine for a visual sanity check but far
+            too correlated for OOD detection statistics -- raise this when measuring AUROC/TPR.
+        max_frames_per_sequence: Frames taken from the front of each sequence.
     """
     print(f"\\nEvaluating on {dataset_name} dataset...")
 
@@ -314,6 +326,7 @@ def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, h
     all_ood_scores = []
     successful_predictions = 0
     total_samples = 0
+    frames_without_detection = 0
 
     samples_processed = 0
 
@@ -326,8 +339,8 @@ def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, h
         full_sequence = np.array(sample['pose_sequence'])  # (sequence_length, 13, 2)
         frames = sample['frames']  # List of PIL Images
 
-        # Process only first few frames for efficiency
-        max_frames = min(10, len(frames))
+        # Process only first few frames per sequence for efficiency
+        max_frames = min(max_frames_per_sequence, len(frames))
 
         for frame_idx in range(max_frames):
             if max_samples is not None and samples_processed >= max_samples:
@@ -348,9 +361,16 @@ def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, h
                 ood_threshold=ood_threshold,
                 human_detection_threshold=YOLO_CONFIDENCE_THRESHOLD
             )
+            # A frame with no YOLO detection produces no pose and no OOD score at all, so it
+            # contributes nothing to either metric -- skip it and count it instead of scoring a
+            # placeholder (which would land at 0.0 and be counted as a true negative).
+            if not pose_predictions:
+                frames_without_detection += 1
+                continue
+
             # Take the first detected person
             mapped_pose = pose_predictions[0]['keypoints']
-            ood_score = pose_predictions[0]['ood_score'] if pose_predictions else 0.0
+            ood_score = pose_predictions[0]['ood_score']
             all_ood_scores.append(float(ood_score))
 
             all_predictions.append(mapped_pose)
@@ -379,8 +399,7 @@ def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, h
             total_samples += 1
             samples_processed += 1
 
-        # Break after first sequence for quick testing
-        if idx == 0:
+        if max_sequences is not None and idx + 1 >= max_sequences:
             break
 
     # Convert to numpy arrays
@@ -395,6 +414,7 @@ def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, h
 
     print(f"\n {dataset_name} Results:")
     print(f"  Total samples: {total_samples}")
+    print(f"  Frames skipped (no human detected): {frames_without_detection}")
     print(f"  Successful predictions: {successful_predictions}")
     print(f"  Detection rate: {successful_predictions/total_samples:.2%}")
     print(f"  PCK@0.05: {metrics['pck']:.3f}")
@@ -408,6 +428,7 @@ def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, h
         'ood_scores': np.array(all_ood_scores),
         'metrics': metrics,
         'detection_rate': successful_predictions / total_samples,
+        'frames_without_detection': frames_without_detection,
         'dataset_name': dataset_name,
         'first_sample': first_sample_data
     }
@@ -415,7 +436,8 @@ def predict_poses_on_h36m_dataset(pose_estimation_jit_fn, params, batch_stats, h
 
 def predict_poses_on_tiger_dataset(pose_estimation_jit_fn, params, batch_stats, human_detector, device_torch,
                                   processed_batches, dataset_name, max_batches=None,
-                                  score_fn=None, ood_threshold=POSE_OOD_THRESHOLD):
+                                  score_fn=None, ood_threshold=POSE_OOD_THRESHOLD,
+                                  max_samples=None):
     """
     Run pose prediction on tiger dataset using processed batches.
     """
@@ -434,6 +456,8 @@ def predict_poses_on_tiger_dataset(pose_estimation_jit_fn, params, batch_stats, 
 
     for batch_idx, batch in enumerate(tqdm(processed_batches, desc=f"Processing {dataset_name}")):
         if max_batches is not None and batch_idx >= max_batches:
+            break
+        if max_samples is not None and total_samples >= max_samples:
             break
 
         batch_size = len(batch['image'])
@@ -631,9 +655,27 @@ def main():
     """Main function for ID vs OOD pose prediction comparison."""
     parser = argparse.ArgumentParser(description='ID vs OOD Pose Prediction Comparison')
     parser.add_argument('--pose_model_path', type=str, default='models/pose_estimation/jax_resnet50_regressflow', help='Direct path to the pose model checkpoint base')
-    parser.add_argument('--pose_score_fn_path', type=str, default='models/ood_functions/H36M_RegressFlowResNet18_3Joints_n9000_4998731f_score_functions.cloudpickle', help='Direct path to the pose OOD score functions (.cloudpickle)')
+    parser.add_argument('--pose_score_fn_path', type=str, default='models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cloudpickle', help='Direct path to the pose OOD score functions (.cloudpickle)')
     parser.add_argument('--output_dir', type=str, default='results/id_vs_ood_pose_prediction', help='Output directory for results')
-    parser.add_argument('--max_samples', type=int, default=10000000000, help='Maximum samples to process per dataset')
+    parser.add_argument('--max_samples', type=int, default=10000000000, help='Maximum H36M (ID) frames to process')
+    parser.add_argument('--h36m_split', type=str, default='validation', choices=['train', 'validation', 'test'],
+                        help="H36M split used as the ID set (default: validation = S11). The pose OOD "
+                             "score function's GGN/sketch is fitted on the train split, so quote "
+                             "false-alarm rates on a held-out split.")
+    parser.add_argument('--h36m_max_files', type=int, default=4,
+                        help='Cap on H36M pose/video file pairs loaded (dataset construction cost; '
+                             'default: 4)')
+    parser.add_argument('--h36m_max_sequences', type=int, default=None,
+                        help='Number of H36M sequences to walk (default: all of the loaded files)')
+    parser.add_argument('--h36m_frames_per_sequence', type=int, default=10,
+                        help='Frames taken from the front of each H36M sequence (default: 10)')
+    parser.add_argument('--tiger_split', type=str, default='all', choices=['train', 'val', 'all'],
+                        help="tiger-pose split used as the OOD set. No tiger image is ever trained "
+                             "or fitted on, so 'all' (default) just means more OOD samples.")
+    parser.add_argument('--ood_threshold', type=float, default=POSE_OOD_THRESHOLD,
+                        help='Decision threshold for the TPR/FPR/TNR/FNR columns (score > threshold '
+                             f'=> flagged OOD). Default: the deployed OOD_THRESHOLD '
+                             f'({POSE_OOD_THRESHOLD:g}) of pose_estimation/h36m_settings.py.')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -658,7 +700,7 @@ def main():
         if args.pose_score_fn_path:
             pose_ood_score_fn, _, _, _ = load_score_functions_from_path(args.pose_score_fn_path)
             print(f"OOD score function loaded from: {args.pose_score_fn_path}")
-            print(f"Using OOD threshold: {POSE_OOD_THRESHOLD:.6f}")
+            print(f"Using OOD threshold: {args.ood_threshold:.6f}")
 
         # Setup datasets
         print("\\nSetting up datasets...")
@@ -666,16 +708,24 @@ def main():
         # H36M dataset (ID data) - using the same approach as pose_estimation_2D.py
         h36m_dataset = Human36mDatasetSequence(
             base_directory=os.path.join(root_dir, "datasets", "H36M", "extracted"),
-            split='train',
-            sequence_length=50  # Smaller sequence for faster processing
+            split=args.h36m_split,
+            sequence_length=50,  # Smaller sequence for faster processing
+            max_files=args.h36m_max_files,
         )
 
         # Tiger pose dataset (OOD data)
-        tiger_dataset = TigerPoseDataset(
-            root_dir=os.path.join(root_dir, "datasets", "tiger-pose"),
-            split='val',  # Use validation set
-            image_size=(256, 256)
-        )
+        tiger_root = os.path.join(root_dir, "datasets", "tiger-pose")
+        if args.tiger_split == 'all':
+            tiger_dataset = torch.utils.data.ConcatDataset([
+                TigerPoseDataset(root_dir=tiger_root, split=sp, image_size=(256, 256))
+                for sp in ('train', 'val')
+            ])
+        else:
+            tiger_dataset = TigerPoseDataset(
+                root_dir=tiger_root,
+                split=args.tiger_split,
+                image_size=(256, 256)
+            )
 
         tiger_dataloader = torch.utils.data.DataLoader(
             tiger_dataset, batch_size=4, shuffle=False, num_workers=0  # Avoid multiprocessing issues with JAX
@@ -707,13 +757,15 @@ def main():
         h36m_results = predict_poses_on_h36m_dataset(
             pose_estimation_jit_fn, params, batch_stats, human_detector, device_torch,
             h36m_dataset, "H36M", max_samples=args.max_samples,
-            score_fn=pose_ood_score_fn, ood_threshold=POSE_OOD_THRESHOLD,
+            score_fn=pose_ood_score_fn, ood_threshold=args.ood_threshold,
+            max_sequences=args.h36m_max_sequences,
+            max_frames_per_sequence=args.h36m_frames_per_sequence,
         )
 
         tiger_results = predict_poses_on_tiger_dataset(
             pose_estimation_jit_fn, params, batch_stats, human_detector, device_torch,
-            processed_tiger_batches, "Tiger", max_batches=3,
-            score_fn=pose_ood_score_fn, ood_threshold=POSE_OOD_THRESHOLD,
+            processed_tiger_batches, "Tiger", max_batches=None,
+            score_fn=pose_ood_score_fn, ood_threshold=args.ood_threshold,
         )
 
         os.makedirs(args.output_dir, exist_ok=True)
@@ -780,14 +832,14 @@ def main():
         print("\\nPlotting OOD score distributions...")
         plot_ood_score_histogram(
             scores=h36m_results['ood_scores'],
-            threshold=POSE_OOD_THRESHOLD,
+            threshold=args.ood_threshold,
             title='2D Pose Prediction OOD Score Distribution - H36M (ID)',
             xlabel='OOD Score',
             save_path=os.path.join(args.output_dir, 'ood_histogram_h36m.png'),
         )
         plot_ood_score_histogram(
             scores=tiger_results['ood_scores'],
-            threshold=POSE_OOD_THRESHOLD,
+            threshold=args.ood_threshold,
             title='2D Pose Prediction OOD Score Distribution - Tiger (OOD)',
             xlabel='OOD Score',
             save_path=os.path.join(args.output_dir, 'ood_histogram_tiger.png'),
@@ -807,7 +859,50 @@ def main():
             output_dir=args.output_dir,
         )
 
-        print("\\nThis performance gap demonstrates the need for OOD detection!")
+        # OOD detection metrics (AUROC/AUPRC plus the rates at the deployed threshold). These are
+        # the numbers the conformal prediction-set table quotes for the pose detector.
+        print("\n" + "=" * 60)
+        print("OOD DETECTION METRICS")
+        print("=" * 60)
+        detection_metrics = compute_ood_detection_metrics(
+            h36m_results['ood_scores'],
+            tiger_results['ood_scores'],
+            threshold=args.ood_threshold,
+        )
+        print_ood_detection_metrics(detection_metrics, label="pose (H36M vs tiger-pose)")
+        save_ood_detection_metrics(
+            detection_metrics,
+            output_dir=args.output_dir,
+            filename="pose_ood_detection_metrics.json",
+            extra={
+                'score_function': args.pose_score_fn_path,
+                'pose_model': args.pose_model_path,
+                'id_dataset': f"H36M {args.h36m_split}",
+                'ood_dataset': "tiger-pose ({})".format(
+                    'train+val' if args.tiger_split == 'all' else args.tiger_split),
+                'id_frames_without_detection': int(h36m_results['frames_without_detection']),
+                'id_pck': float(h36m_results['metrics']['pck']),
+                'ood_pck': float(tiger_results['metrics']['pck']),
+                'id_mpjpe_px': float(h36m_results['metrics']['mpjpe']),
+                'ood_mpjpe_px': float(tiger_results['metrics']['mpjpe']),
+                'id_ood_score_mean': float(np.mean(h36m_results['ood_scores'])),
+                'id_ood_score_std': float(np.std(h36m_results['ood_scores'])),
+                'ood_ood_score_mean': float(np.mean(tiger_results['ood_scores'])),
+                'ood_ood_score_std': float(np.std(tiger_results['ood_scores'])),
+            },
+        )
+
+        # Save the raw scores so the metrics can be re-derived (or re-thresholded) without a re-run.
+        scores_file = os.path.join(args.output_dir, "pose_ood_scores.cloudpickle")
+        with open(scores_file, 'wb') as f:
+            cloudpickle.dump({
+                'ID': np.asarray(h36m_results['ood_scores']),
+                'OOD (tiger-pose)': np.asarray(tiger_results['ood_scores']),
+                'args_dict': vars(args),
+            }, f)
+        print(f"Saved pose OOD scores to {scores_file}")
+
+        print("\nThis performance gap demonstrates the need for OOD detection!")
         print("Next step: Use sketching Lanczos to detect OOD samples.")
 
     except Exception as e:

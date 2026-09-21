@@ -13,6 +13,7 @@ POSE_SCORE_FN="models/ood_functions/jax_resnet18_regressflow_3joints_score_fn.cl
 MOTION_MODEL="models/motion_prediction/final_model/dct_pose_transformer.pickle"
 MOTION_SCORE_FN="models/ood_functions/dct_pose_transformer_randproj_score_fn.cloudpickle"
 
+# 3 and 5 ran. Need to run 10 and 50.
 for N in 3 5 10 50; do
     python -m conformal_human_motion_prediction.examples.eval_full_pipeline \
         --pose_model_path "$POSE_MODEL" \

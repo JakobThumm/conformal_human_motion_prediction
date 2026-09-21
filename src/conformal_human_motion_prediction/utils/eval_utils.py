@@ -5,6 +5,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import csv
+import json
 import os
 from pathlib import Path
 
@@ -425,9 +426,17 @@ def simple_coverage_stats_sara(
         predictions: predicted poses. Shape: [N, T, J, 3]
         radius: radius of the reachable set sphere. Shape: [N, T, J]
         targets: target poses. Shape: [N, T, J, 3]
+    Coverage is reported at two granularities. ``overall_within_set`` is the MARGINAL rate over
+    individual (sample, frame, joint) spheres -- one trial per joint-timestep. ``within_set_per_
+    prediction`` is the FAMILY-WISE rate over whole predictions: a prediction counts as covered
+    only if every one of its valid T*J spheres contains its target, which is the event a downstream
+    safety shield actually depends on (one escaped joint at one timestep is enough to break it).
+    The per-prediction rate is therefore always <= the marginal one.
+
     Returns:
         - coverage_stats dict with keys:
-            "overall_within_set", "per_joint_within_set", "per_frame_within_set"
+            "overall_within_set", "within_set_per_prediction", "n_predictions",
+            "per_joint_within_set", "per_frame_within_set"
         - within set object
     """
     mask_predictions = np.all(predictions == 0.0, axis=(2, 3))  # [N, T], True = invalid
@@ -437,6 +446,14 @@ def simple_coverage_stats_sara(
     distances = np.linalg.norm(predictions - targets, axis=-1)  # Shape: [N, T, J]
     within_set = distances <= radius
     masked_within_set = np.ma.array(within_set, mask=full_mask)
+    # Per-prediction (family-wise): covered iff no VALID joint-timestep of the sample escapes.
+    # Predictions that are entirely padding contribute no trial at all.
+    valid = ~full_mask                                                            # [N, T, J]
+    any_valid = valid.any(axis=(1, 2))                                            # [N]
+    covered_pred = ~np.any(valid & ~within_set, axis=(1, 2))                      # [N]
+    n_predictions = int(any_valid.sum())
+    within_set_per_prediction = (float(covered_pred[any_valid].mean()) if n_predictions
+                                 else float("nan"))
     masked_radius = np.ma.array(radius / 1000.0, mask=full_mask)
     # Per-sphere volume [N, T, J] (m^3): stats are taken over the individual spheres, not the sphere
     # of the mean radius (4/3 pi (mean r)^3). The distribution is heavy-tailed (a few OOD spheres are
@@ -447,6 +464,8 @@ def simple_coverage_stats_sara(
                     else (np.nan, np.nan, np.nan))
     coverage_stats = {
         "overall_within_set": float(masked_within_set.mean()),
+        "within_set_per_prediction": within_set_per_prediction,
+        "n_predictions": n_predictions,
         "per_joint_within_set": np.array(masked_within_set.mean(axis=(0, 1))),
         "per_frame_within_set": np.array(masked_within_set.mean(axis=(0, 2))),
         "overall_volume": float(masked_volume.mean()),
@@ -469,7 +488,9 @@ def save_coverage_stats_sara(
 
     Args:
         coverage_stats: Dictionary with keys:
-            - 'overall_within_set': scalar coverage
+            - 'overall_within_set': scalar marginal coverage (per joint-timestep sphere)
+            - 'within_set_per_prediction': scalar family-wise coverage (whole prediction covered)
+            - 'n_predictions': number of predictions behind the family-wise rate
             - 'per_frame_within_set': per-frame coverage, shape [T]
             - 'per_joint_within_set': per-joint coverage, shape [J]
             - 'overall_volume': scalar mean sphere volume in m^3
@@ -485,6 +506,9 @@ def save_coverage_stats_sara(
         writer = csv.writer(f)
         writer.writerow(['metric', 'value'])
         writer.writerow(['overall_coverage_percent', f'{coverage_stats["overall_within_set"] * 100:.4f}'])
+        writer.writerow(['overall_coverage_per_prediction_percent',
+                         f'{coverage_stats.get("within_set_per_prediction", float("nan")) * 100:.4f}'])
+        writer.writerow(['n_predictions', f'{coverage_stats.get("n_predictions", 0)}'])
         writer.writerow(['overall_volume_m3', f'{coverage_stats["overall_volume"]:.6f}'])
         writer.writerow(['overall_volume_std_m3', f'{coverage_stats.get("overall_volume_std", float("nan")):.6f}'])
         writer.writerow(['overall_volume_p5_m3', f'{coverage_stats.get("overall_volume_p5", float("nan")):.6f}'])
@@ -513,7 +537,11 @@ def print_simple_coverage_stats_sara(
 ):
     """Print coverage statistics."""
     overall_cov = coverage_stats["overall_within_set"]
-    print(f"Overall coverage within set: {overall_cov * 100:.2f}%")
+    print(f"Overall coverage within set: {overall_cov * 100:.2f}% (per joint-timestep, "
+          f"miss-rate {1 - overall_cov:.3e})")
+    pred_cov = coverage_stats.get("within_set_per_prediction", float("nan"))
+    print(f"Coverage per whole prediction: {pred_cov * 100:.2f}% (all T*J spheres hold; "
+          f"miss-rate {1 - pred_cov:.3e}, n={coverage_stats.get('n_predictions', 0):,})")
     print(f"Mean volume = {coverage_stats['overall_volume']:.4f} m^3")
     if print_per_time_stats:
         print("\nPer-Time Coverage Stats:")
@@ -562,6 +590,136 @@ def convert_covariance_matrices_to_set(
         radius = np.sqrt(lambda_max * chi_squared_val)
 
     return radius
+
+
+def covariance_sigma_max(
+    covariance_matrices: Union[np.ndarray, jnp.ndarray]
+) -> np.ndarray:
+    """Radial standard deviation sqrt(lambda_max(C)) of each covariance matrix.
+
+    This is the scale that ``convert_covariance_matrices_to_set`` multiplies by the Gaussian factor
+    sqrt(chi2.ppf(likelihood, 3)) to obtain the spherical set radius. The max-score conformal
+    ablation (see ``motion_prediction.conformal_calibration``) replaces that fixed Gaussian factor
+    with a single calibrated alpha_max, so it needs sigma_max on its own.
+
+    Args:
+        covariance_matrices: Cov. matrices. Shape: [..., 3, 3]
+    Returns:
+        sigma_max, shape [...] (same units as the covariance's square root, i.e. mm).
+    """
+    cov = np.asarray(covariance_matrices, dtype=np.float64)
+    lambda_max = np.max(np.linalg.eigvalsh(cov), axis=-1)
+    return np.sqrt(np.maximum(lambda_max, 0.0))
+
+
+def compute_ood_detection_metrics(
+    id_scores: np.ndarray,
+    ood_scores: np.ndarray,
+    threshold: float = None,
+) -> dict:
+    """Compute OOD detection metrics from ID and OOD score samples.
+
+    The OOD score is *higher is more out-of-distribution*, and the deployed detector flags a
+    sample as OOD when ``score > threshold`` (see ``is_ood`` in
+    ``pose_estimation/inference_helper_batched.py`` and ``motion_prediction/inference_helper.py``).
+    OOD is therefore the positive class:
+
+      * TPR (recall / detection rate) = OOD samples correctly flagged OOD,
+      * FNR = 1 - TPR = OOD samples that slip through as in-distribution (the unsafe error),
+      * FPR (false-alarm rate) = ID samples wrongly flagged OOD,
+      * TNR = 1 - FPR.
+
+    AUROC/AUPRC are rank-based and therefore threshold-free; the four rates are evaluated at
+    ``threshold`` and are only meaningful for the score function that threshold was tuned for
+    (OOD score magnitudes are head-specific and not comparable across score functions).
+
+    Args:
+        id_scores: 1-D array of OOD scores on in-distribution samples.
+        ood_scores: 1-D array of OOD scores on out-of-distribution samples.
+        threshold: Decision threshold for the confusion-matrix rates. If None, only the
+            threshold-free metrics are returned and the rate entries are None.
+    Returns:
+        dict with n_id, n_ood, auroc, auprc, threshold, tpr, fpr, tnr, fnr and the raw
+        tp/fn/fp/tn counts.
+    """
+    from sklearn.metrics import auc, precision_recall_curve, roc_auc_score
+
+    id_scores = np.asarray(id_scores, dtype=np.float64).ravel()
+    ood_scores = np.asarray(ood_scores, dtype=np.float64).ravel()
+
+    # Labels: 0 = ID (negative), 1 = OOD (positive).
+    labels = np.concatenate([np.zeros(len(id_scores)), np.ones(len(ood_scores))])
+    scores = np.concatenate([id_scores, ood_scores])
+
+    precision, recall, _ = precision_recall_curve(labels, scores)
+    metrics = {
+        "n_id": int(len(id_scores)),
+        "n_ood": int(len(ood_scores)),
+        "auroc": float(roc_auc_score(labels, scores)),
+        "auprc": float(auc(recall, precision)),
+        "threshold": None if threshold is None else float(threshold),
+        "tpr": None, "fnr": None, "fpr": None, "tnr": None,
+        "tp": None, "fn": None, "fp": None, "tn": None,
+    }
+    if threshold is None:
+        return metrics
+
+    tp = int(np.sum(ood_scores > threshold))
+    fn = int(len(ood_scores) - tp)
+    fp = int(np.sum(id_scores > threshold))
+    tn = int(len(id_scores) - fp)
+    metrics.update({
+        "tp": tp, "fn": fn, "fp": fp, "tn": tn,
+        "tpr": float(tp / len(ood_scores)) if len(ood_scores) else float("nan"),
+        "fnr": float(fn / len(ood_scores)) if len(ood_scores) else float("nan"),
+        "fpr": float(fp / len(id_scores)) if len(id_scores) else float("nan"),
+        "tnr": float(tn / len(id_scores)) if len(id_scores) else float("nan"),
+    })
+    return metrics
+
+
+def print_ood_detection_metrics(metrics: dict, label: str = "OOD detection") -> None:
+    """Print the dict returned by :func:`compute_ood_detection_metrics`."""
+    print(f"OOD detection metrics - {label} "
+          f"(n_ID={metrics['n_id']}, n_OOD={metrics['n_ood']}):")
+    print(f"  AUROC: {metrics['auroc']:.4f}")
+    print(f"  AUPRC: {metrics['auprc']:.4f}")
+    if metrics["threshold"] is None:
+        print("  (no threshold given - TPR/FPR/TNR/FNR not computed)")
+        return
+    print(f"  threshold: {metrics['threshold']:g}")
+    print(f"  TPR (OOD detected): {metrics['tpr']:.4f}  ({metrics['tp']}/{metrics['n_ood']})")
+    print(f"  FNR (OOD missed):   {metrics['fnr']:.4f}  ({metrics['fn']}/{metrics['n_ood']})")
+    print(f"  FPR (false alarms): {metrics['fpr']:.4f}  ({metrics['fp']}/{metrics['n_id']})")
+    print(f"  TNR (ID accepted):  {metrics['tnr']:.4f}  ({metrics['tn']}/{metrics['n_id']})")
+
+
+def save_ood_detection_metrics(
+    metrics: dict,
+    output_dir: str = "results",
+    filename: str = "ood_detection_metrics.json",
+    extra: dict = None,
+) -> str:
+    """Write :func:`compute_ood_detection_metrics` output to JSON.
+
+    Args:
+        metrics: Metrics dict to save.
+        output_dir: Directory in which to write the JSON.
+        filename: File name to write.
+        extra: Optional additional key/values merged into the saved dict (e.g. the score-function
+            path, the ID/OOD dataset names).
+    Returns:
+        The path written.
+    """
+    payload = dict(metrics)
+    if extra:
+        payload.update(extra)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"Saved OOD detection metrics to {filepath}")
+    return filepath
 
 
 OOD_SCORE_PERCENTILES = [0.01, 0.1, 0.5, 1, 3, 5, 10, 25, 50, 75, 90, 95, 97, 99, 99.5, 99.9, 99.99]

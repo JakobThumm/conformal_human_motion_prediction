@@ -8,7 +8,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from conformal_human_motion_prediction.pose_estimation.inference_helper_batched import update_motion_prediction_buffer
-from conformal_human_motion_prediction.utils.eval_utils import convert_covariance_matrices_to_set
+from conformal_human_motion_prediction.utils.eval_utils import (
+    convert_covariance_matrices_to_set,
+    covariance_sigma_max,
+)
 from typing import List
 
 
@@ -430,6 +433,13 @@ def calibrate_covariance_matrices(
     return covariance_matrices
 
 
+# Calibrator modes whose radius is a single scalar times sqrt(lambda_max(cov)) -- they differ only
+# in where that scalar comes from: "max" = conformal quantile of the per-sample max normalized
+# error; "uncalibrated" = the fixed training-time Gaussian factor sqrt(chi2_3(level)), no
+# calibration at all. Both deploy through the ``alpha_max`` field.
+ALPHA_MODES = ("max", "uncalibrated")
+
+
 def load_conformal_calibrator(path):
     """Load a saved conditional-conformal calibrator .npz, or None if the file is absent.
 
@@ -442,9 +452,17 @@ def load_conformal_calibrator(path):
     if path is None or not os.path.exists(path):
         return None
     d = np.load(path)
-    return dict(bin_edges=np.asarray(d["bin_edges"], dtype=np.float64),
-                q_grid=np.asarray(d["q_grid"], dtype=np.float64),
-                B=int(d["B"]), level=float(d["level"]), J=int(d["J"]), T=int(d["T"]))
+    # "mode" was added with the max-score ablation; files written before that are conditional.
+    mode = str(d["mode"]) if "mode" in d.files else "conditional"
+    calib = dict(bin_edges=np.asarray(d["bin_edges"], dtype=np.float64),
+                 q_grid=np.asarray(d["q_grid"], dtype=np.float64),
+                 B=int(d["B"]), level=float(d["level"]), J=int(d["J"]), T=int(d["T"]),
+                 mode=mode)
+    if "alpha_max" in d.files:
+        calib["alpha_max"] = float(d["alpha_max"])
+    if mode in ALPHA_MODES and "alpha_max" not in calib:
+        raise ValueError(f"{path} declares mode={mode!r} but carries no alpha threshold.")
+    return calib
 
 
 def conformal_set_radius(model_cov, input_cov, calibrator):
@@ -453,6 +471,14 @@ def conformal_set_radius(model_cov, input_cov, calibrator):
     Drop-in replacement for ``convert_covariance_matrices_to_set(calibrate_covariance_matrices(.))``.
     Conditions each (joint, frame) on the last input frame's per-joint uncertainty:
         r_cal = max(r_model + q_hat(joint, frame, input_unc_bin), 0).
+
+    A calibrator whose ``mode`` is in ``ALPHA_MODES`` instead applies the scalar-factor rule
+        r_cal = alpha_max * sqrt(lambda_max(model_cov)),
+    where alpha_max is either the max-score conformal threshold (``mode == "max"``, calibrated on
+    the per-sample max normalized error, so all (joint, frame) sets hold *simultaneously* with
+    probability >= level) or the fixed Gaussian factor sqrt(chi2_3(level)) of the no-calibration
+    ablation (``mode == "uncalibrated"``). ``input_cov`` is unused in those modes (they need no
+    conditioning) but may still be passed.
 
     Args:
         model_cov: raw model covariance, [..., T, J, 3, 3] (mm^2); accepts batched [N,T,J,3,3] or
@@ -470,6 +496,9 @@ def conformal_set_radius(model_cov, input_cov, calibrator):
         mc, ic = mc[None], ic[None]
     N, T, J = mc.shape[:3]
     level = calibrator["level"]
+    if calibrator.get("mode", "conditional") in ALPHA_MODES:
+        r = calibrator["alpha_max"] * covariance_sigma_max(mc)                               # [N,T,J] mm
+        return r[0] if single else r
     r_model = np.asarray(convert_covariance_matrices_to_set(mc, level), dtype=np.float64)   # [N,T,J] mm
     in_set = np.asarray(convert_covariance_matrices_to_set(ic, level), dtype=np.float64) / 1000.0  # [N,J] m
     in_TJ = np.repeat(in_set[:, None, :], T, axis=1)                                         # [N,T,J] m

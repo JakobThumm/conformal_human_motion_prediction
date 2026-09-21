@@ -271,6 +271,27 @@ python -m conformal_human_motion_prediction.examples.id_vs_ood_motion_prediction
 Recorded numbers, and why a learned (VAE) head was tried and rejected, are in
 [`docs/RESULTS.md`](docs/RESULTS.md) § OOD Detection.
 
+Both ID-vs-OOD scripts also write a metrics JSON with AUROC/AUPRC **and** the confusion-matrix
+rates (TPR/FPR/TNR/FNR) at the deployed `OOD_THRESHOLD` — the operating point the pipeline actually
+runs at, which AUROC alone does not show. These JSONs feed the OOD-detection table that
+`final_results/motion_prediction_conformal_prediction_set_results.sh` appends to
+`conformal_prediction_set_results.tex`:
+
+```bash
+# pose detector: H36M (ID) vs tiger-pose (OOD)
+python -m conformal_human_motion_prediction.examples.id_vs_ood_pose_prediction \
+    --output_dir results/pose_prediction_ood \
+    --max_samples 500 --h36m_max_files 4 --h36m_frames_per_sequence 5
+
+# motion detector: re-derive the rates from a finished run's saved scores (no GPU pass)
+python -m conformal_human_motion_prediction.examples.id_vs_ood_motion_prediction \
+    --load_scores results/motion_prediction_ood_randproj/dct_pose_transformer_randproj_score_fn_ood_scores.cloudpickle \
+    --output_dir results/motion_prediction_ood_randproj
+```
+
+Pass `--ood_threshold` to either script to read the rates off a different operating point; the
+thresholds are head-specific, so a threshold from one score function says nothing about another.
+
 ### 2.4 Calibrate the conformal prediction sets
 
 The conditional-conformal calibrator
@@ -332,6 +353,10 @@ python -m conformal_human_motion_prediction.examples.motion_prediction \
     "--likelihood", "0.9999"
     // Other knobs you can add: --n_bins 8  --tail_edges 0.3 0.5 0.75  --n_min 200
     //                         --base raw|affine  --no-monotone  --seed 0
+    // --method conditional|max|uncalibrated selects which fit is written to --calibrator_path
+    // ('max' = one global alpha_max; 'uncalibrated' = no calibration, alpha = sqrt(chi2_3(level))).
+    // All three are always reported side by side; the ablation .npz files are fitted automatically
+    // by the final_results/ scripts.
   ]
 }
 ```
@@ -359,6 +384,7 @@ bash final_results/motion_prediction_no_uncertainty_no_ood_results.sh     # moti
 bash final_results/motion_prediction_conformal_prediction_set_results.sh  # conformal prediction sets (coverage/volume)
 bash final_results/robot_shield_safety_results.sh                         # robot-shield certification (c_safe, PFH_D, PL)
 bash final_results/full_pipeline_ood_handling_evaluation.sh               # full pipeline (sweeps N_req)
+bash final_results/runtime_results.sh                                     # per-stage runtime (ms/step)
 bash final_results/create_full_conformal_prediction_results_table.sh      # combine conformal + shield -> final table
 ```
 
@@ -391,7 +417,7 @@ bound. See §3.4 for the workflow:
 
 | Method | ↑ c_safe (%) | ↓ c_safe ∧ contact | ↓ PFH_D (1/h) | PL |
 |--------|--------------|--------------------|---------------|-----|
-| ISO 13855 (no OOD filter) | 98.91 | 12,206,306 | 1.49e-1 | none |
+| ISO 13855 (no OOD filter) | 98.91 | 12,206,306 | 5.50e-1 | none |
 | Ours (no OOD filter)      | 99.21 | 2 | 6.27e-7 | PL d |
 | Ours (OOD filtered)       | **99.23** | **0** | **4.14e-7** | **PL d** |
 
@@ -409,13 +435,31 @@ of correct poses required before triggering motion prediction:
 > $\sum_{i=K_I - N_\text{req}+1}^{K_I} v_i < N_\text{req}$ by 23.8 % while only increasing the average
 > MPJPE by 1.9 %.
 
+**Per-stage runtime** (`runtime_results.sh`) — steady-state times over 450 pipeline steps on a
+single RTX 5090, both camera views batched together; the first 50 steps are discarded because
+just-in-time compilation costs 10–15 s per stage and does not recur:
+
+| Stage | Mean (ms) | Median (ms) |
+|-------|-----------|-------------|
+| 2D pose estimation (incl. human detection) | 13.40 ± 0.62 | 13.20 |
+| Pose OOD detection (SLU_2D) | 36.48 ± 0.21 | 36.39 |
+| Triangulation | 1.90 ± 0.14 | 1.87 |
+| Motion prediction | 4.69 ± 0.04 | 4.69 |
+| Motion OOD detection (SLU_mot) | 9.08 ± 0.09 | 9.08 |
+| Prediction-set computation | 0.67 ± 0.10 | 0.64 |
+| **Total** | **66.22** | **65.86** |
+
+> The two OOD monitors account for 46 ms of the 66 ms cycle time (69 %). The CSV also carries a
+> `measured_wall` row — the independent end-to-end wall clock per step (69.67 ms here). It should
+> sit a few ms above the stage sum; a large gap means the per-stage synchronisation is wrong.
+
 **Combined final results table** (`create_full_conformal_prediction_results_table.sh`,
 `tab:all_conformal_results`) — coverage reported as miss-rate ($1-p_\text{cov}$) and nines of
 reliability ($-\log_{10}$ miss-rate):
 
 | Method | ↓ Miss-rate | ↑ 9s of rel. | Vol 5% | 50% | 95% | ↑ c_safe (%) | ↓ ∧ contact | ↓ PFH_D (1/h) | PL |
 |--------|-------------|--------------|--------|-----|-----|--------------|-------------|---------------|-----|
-| ISO 13855            | 8.1e-4 | 3.09 | 0.017 | 0.687 | 3.252 | 98.91 | 1.2e7 | 1.49e-1 | none |
+| ISO 13855            | 8.1e-4 | 3.09 | 0.017 | 0.687 | 3.252 | 98.91 | 1.2e7 | 5.50e-1 | none |
 | Ours with OOD inputs | 2.1e-4 | 3.67 | 0.015 | 0.091 | 0.664 | 99.21 | 2 | 6.27e-7 | PL d |
 | Ours OOD filtered    | **1.6e-4** | **3.80** | **0.015** | **0.088** | **0.638** | **99.23** | **0** | **4.14e-7** | **PL d** |
 
@@ -471,8 +515,10 @@ VSCode launch config in `.vscode/launch.json`):
 
 End-to-end evaluation of the motion model as a SARA-style safety shield: drop a robot into the
 recorded human scenes and measure how often the shield verifies a trajectory as safe while the
-ground truth has an (unsafe) contact. The verified-but-unsafe rate is bounded
-(Clopper-Pearson) and converted to an ISO 13849-1 PFH_D / Performance Level.
+ground truth has a contact. That verified-but-contact count is the dangerous failure: its rate is
+bounded (Clopper-Pearson) and converted to an ISO 13849-1 PFH_D / Performance Level. (The runs also
+report a speed-gated `verified & unsafe contact` count as an internal diagnostic; it never feeds
+PFH_D.)
 
 The full chain, one step per artifact:
 
@@ -562,6 +608,87 @@ Steps 2–5 (plus the LaTeX table for all three methods) are scripted in
 intersection checks on the GPU (`--backend gpu`); levels 1–3 of the bounding-sphere culling stay on
 the CPU. `--backend cpu --num_workers N` is the reference path. Verify the two agree with
 `--parity N`.
+
+#### Factorised failure-risk estimate (`examples.simulate_shield_failure_risk`)
+
+The shield simulation above counts the rare event directly, so its Clopper-Pearson bound treats
+~2e13 (placement, trajectory, window) cycles as independent trials — they are not: the same ~6e4
+recorded windows are reused ~1e8 times. `examples.simulate_shield_failure_risk` estimates the same
+quantity without that assumption, by **factorising** the event instead of counting it:
+
+```
+lambda_d [1/h] = lambda_f * E_f[ P(d | f) ]
+```
+
+A dangerous failure needs both a prediction failure *f* (the true human occupancy escapes the
+predicted set: `||true_c - pred_c|| + true_r - pred_r > 0` at some horizon step and joint) and that
+failure turning into a verified-but-unsafe contact *d*. The split is exact because
+`verified AND contact => the truth left the predicted set` — the shield can only be fooled inside
+the failure set. `--verify_lemma N` tests that lemma empirically by replaying *non*-failure windows
+and asserting zero verified-and-contact events.
+
+The two factors have completely different error budgets:
+
+* `lambda_f` — failure **episodes** per operating hour, measured from the recorded data (hundreds
+  of events). The per-window indicator is a duty cycle, so the rate is rebuilt at the deployment
+  cadence: `lambda_f = p_hat * fps * 3600 / L`, with `p_hat` from windows sub-sampled by
+  `--failure_stride` (adjacent windows are the same physical event — the indicator's lag-1
+  autocorrelation is ~0.57, gone by lag 5) and `L` = mean failure-episode length from the run-length
+  distribution (~2.3 windows = 93 ms on validation). Reported both declustered and with the
+  conservative `L = 1` (which over-counts episodes ~L-fold, hence an upper bound).
+* `P(d | f_i)` — obtained by replaying **only the failing windows** against `--num_robot_poses`
+  random placements (same 10 m disk / yaw / z sampling, same level 1–5 culling, same GPU backend).
+  This is a Monte-Carlo integral over a placement distribution *we choose*, so its precision is
+  limited by compute, not by data, and it contributes no statistical error.
+
+Composition is reported as a 2x2 table (declustered vs `L = 1`, average vs worst placement), each
+inverted into an **exposure budget** `1e-6 / lambda_d` — the share of an operating hour with a human
+in the workspace that still meets PL d. A bootstrap over the observed failure set gives the 95 %
+interval and 99 % upper limit (it captures *which* failures were observed, not between-subject
+variability — H36M has one subject per split). Because the placements really are i.i.d. draws, a
+binomial upper bound over placements is also printed; that bound is what carries the result when the
+brute force sees zero dangerous events, i.e. when the point estimate is below the grid resolution
+`1/(placements x trajectories)`.
+
+```bash
+XLA_PYTHON_CLIENT_PREALLOCATE=false python -u -m \
+  conformal_human_motion_prediction.examples.simulate_shield_failure_risk \
+  --results_file results/motion_prediction/motion_prediction_results_validation.cloudpickle \
+  --conformal_calibrator models/motion_prediction/conformal_calibration/conformal_calibrator.npz \
+  --backend gpu --human_set conformal --no-mask_ood --pose_radius 10.0 --num_robot_poses 200000 \
+  --verify_lemma 500 --results_csv results/final/robot_shield/failure_risk.csv
+```
+
+The knobs mirror `simulate_robot_shield` (`--human_set {conformal,sara}`, `--mask_ood`,
+`--conformal_calibrator`, `--backend`, ...) so all three predicted-set variants are evaluated by the
+same script; `--max_failures_eval` shrinks the failure set for smoke runs and `--save_per_failure
+<path.npz>` dumps the per-failure escape size and `P(d|f_i)`. One CSV row per run, header-migrating
+like the shield CSV.
+
+**Throughput.** The placement bound tightens as `1/--num_robot_poses`, so the useful runs are large
+(1e8–1e9 placements) and the loop is dispatch-bound, not compute-bound:
+
+* Levels 1–3 are gated for a whole block of 100k placements at once
+  (`simulate_robot_shield.pose_active_sets_batched`), and the ~88 % of placements the robot cannot
+  reach at all are accounted for in bulk — that part now costs nothing measurable.
+* `--gpu_a_chunk` (default 128) sets the width every GPU launch is padded to. The run prints the
+  observed active-motion count per surviving placement (median 24 / mean 89 / p95 271 on the
+  validation failure set) and suggests the nearest power of two to 1.5× the mean; it must be
+  re-tuned when the failure count changes, because both padding waste (chunk ≫ mean) and launch
+  overhead (chunk ≪ mean) cost throughput.
+* `--shards N` splits the placements over N worker **subprocesses** (not `fork` — the parent has
+  already initialised CUDA), each with an independent placement stream, its own log under
+  `--shard_dir` and a raw-count `.npz`. The launcher asserts every shard priced the same failure
+  set (a digest of the failure-window indices), pools the counts — additive for counts, `max` for
+  the sup-over-placements, and `lambda_f` / the duty cycle computed once because they do not depend
+  on placements — and reports once. A single progress bar is driven by the workers' progress files.
+  Measured on one RTX 5090: a single process leaves the GPU ~64 % idle, `--shards 4` saturates it
+  (~97 % utilisation), and beyond that there is nothing left to win, so **`--shards 4` is the
+  recommendation** (~16,700 placements/s; ~6.9 h for 4.1e8 placements).
+
+Per-placement bookkeeping is online throughout (running max, counters, a coarse histogram and the
+first 1000 non-zero placements), so a 4e8-placement run holds nothing that scales with the
+placement count; placements themselves are drawn in 1e6 blocks for the same reason.
 
 ---
 

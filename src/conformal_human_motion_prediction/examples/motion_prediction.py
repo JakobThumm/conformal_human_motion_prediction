@@ -98,6 +98,25 @@ def main():
         help="Path to the conditional-conformal calibrator .npz. Falls back to affine "
         "calibration if the file is absent.",
     )
+    parser.add_argument(
+        "--conformal_calibrator_max",
+        type=str,
+        default=None,
+        help="Optional path to a max-score (single-threshold) calibrator .npz, written by "
+        "conformal_calibration --method max. When given, the ablation's coverage/volume CSVs "
+        "(coverage_stats_conformal_prediction_sets_max[_ood_filtered].csv) are written alongside "
+        "the conditional ones, so one evaluation run fills every row of the results table.",
+    )
+    parser.add_argument(
+        "--conformal_calibrator_uncalibrated",
+        type=str,
+        default=None,
+        help="Optional path to a no-calibration ablation calibrator .npz, written by "
+        "conformal_calibration --method uncalibrated (r = sqrt(chi2_3(level)) * "
+        "sqrt(lambda_max(cov)), i.e. trust the predicted covariance). When given, its "
+        "coverage/volume CSVs (coverage_stats_conformal_prediction_sets_uncalibrated"
+        "[_ood_filtered].csv) are written alongside the others.",
+    )
 
     args = parser.parse_args()
 
@@ -209,12 +228,38 @@ def main():
                          if _li_full.shape[-1] >= N_JOINTS * 3 + N_JOINTS * 9 else None)
     last_input_poses = _li_full[..., :N_JOINTS * 3].reshape(-1, N_JOINTS, 3)
     conformal_calibrator = None
+    # Ablation calibrators, each keyed by the mode its .npz must declare:
+    #   "max"          -> one conformal alpha_max over all joint-timesteps
+    #   "uncalibrated" -> no calibration at all, alpha = sqrt(chi2_3(level))
+    # Both share the apply rule alpha * sqrt(lambda_max(cov)); only the source of alpha differs.
+    ablations = [
+        ("max", args.conformal_calibrator_max, "max", "max-score"),
+        ("uncalibrated", args.conformal_calibrator_uncalibrated, "uncalibrated", "no-calibration"),
+    ]
+    ablation_calibrators = {}
     if input_covariances is not None:
         cc_path = os.path.join(root_dir, args.conformal_calibrator)
         conformal_calibrator = load_conformal_calibrator(cc_path)
         if conformal_calibrator is not None:
             print(f"Using conditional-conformal calibrator {cc_path} "
                   f"(target {conformal_calibrator['level']:.4f}) for the conformal prediction sets.")
+        for mode, path, _, label in ablations:
+            if not path:
+                continue
+            abs_path = os.path.join(root_dir, path)
+            calib = load_conformal_calibrator(abs_path)
+            if calib is None:
+                print(f"WARNING: {label} calibrator {abs_path} not found — skipping its "
+                      f"ablation rows.")
+                continue
+            if calib.get("mode") != mode:
+                raise SystemExit(
+                    f"{abs_path} has mode={calib.get('mode')!r}, not {mode!r}. "
+                    f"Fit it with conformal_calibration --method {mode}."
+                )
+            print(f"Using {label} calibrator {abs_path} (alpha={calib['alpha_max']:.4f}, target "
+                  f"{calib['level']:.4f}) for the ablation rows.")
+            ablation_calibrators[mode] = calib
     # Increase covariance for certain times and joints
     covariance_matrices_calibrated = calibrate_covariance_matrices(
         covariance_matrices=covariance_matrices,
@@ -237,17 +282,20 @@ def main():
         radius_conformal_prediction_sets = convert_covariance_matrices_to_set(
             np.array(covariance_matrices_calibrated), likelihood=SET_LIKELIHOOD
         )
-    coverage_stats_conformal_prediction_sets, _ = simple_coverage_stats_sara(
-        predictions=predictions,
-        radius=radius_conformal_prediction_sets,
-        targets=targets,
-    )
-    print(f"Predicted spherical reachable set coverage stats for {SET_LIKELIHOOD} likelihood:")
-    print_simple_coverage_stats_sara(coverage_stats_conformal_prediction_sets)
-    save_coverage_stats_sara(
-        coverage_stats_conformal_prediction_sets,
-        filename="coverage_stats_conformal_prediction_sets",
-        output_dir=args.output_dir,
+    def report_set_coverage(radius, filename, header, keep=None):
+        """Coverage/volume stats for one predicted set -> stdout + one CSV row file in output_dir."""
+        pred_, rad_, tgt_ = (predictions, radius, targets) if keep is None else (
+            predictions[keep], radius[keep], targets[keep])
+        stats, _ = simple_coverage_stats_sara(predictions=pred_, radius=rad_, targets=tgt_)
+        print(header)
+        print_simple_coverage_stats_sara(stats)
+        save_coverage_stats_sara(stats, filename=filename, output_dir=args.output_dir)
+        return stats
+
+    report_set_coverage(
+        radius_conformal_prediction_sets,
+        "coverage_stats_conformal_prediction_sets",
+        f"Predicted spherical reachable set coverage stats for {SET_LIKELIHOOD} likelihood:",
     )
 
     # OOD-filtered conformal prediction sets ("ours with OOD filtered"): the same conformal sets,
@@ -259,20 +307,39 @@ def main():
     print(f"OOD filtering: {n_ood}/{is_oods_np.size} samples flagged OOD "
           f"(score > OOD_THRESHOLD={OOD_THRESHOLD:g}); {int(keep_id.sum())} in-distribution kept.")
     if keep_id.any():
-        coverage_stats_conformal_ood_filtered, _ = simple_coverage_stats_sara(
-            predictions=predictions[keep_id],
-            radius=radius_conformal_prediction_sets[keep_id],
-            targets=targets[keep_id],
-        )
-        print("Predicted conformal set coverage stats (OOD-filtered, in-distribution only):")
-        print_simple_coverage_stats_sara(coverage_stats_conformal_ood_filtered)
-        save_coverage_stats_sara(
-            coverage_stats_conformal_ood_filtered,
-            filename="coverage_stats_conformal_prediction_sets_ood_filtered",
-            output_dir=args.output_dir,
+        report_set_coverage(
+            radius_conformal_prediction_sets,
+            "coverage_stats_conformal_prediction_sets_ood_filtered",
+            "Predicted conformal set coverage stats (OOD-filtered, in-distribution only):",
+            keep=keep_id,
         )
     else:
         print("No in-distribution samples after OOD filtering — skipping the OOD-filtered table.")
+
+    # Ablations: the same sets formed by ONE global scalar alpha instead of the conditional q_hat
+    # grid (r = alpha * sqrt(lambda_max(cov))) -- either the max-score conformal threshold or the
+    # uncalibrated training-time factor sqrt(chi2_3(level)). Same two population variants as above,
+    # so the table rows are directly comparable.
+    for mode, _, suffix, label in ablations:
+        calib = ablation_calibrators.get(mode)
+        if calib is None:
+            continue
+        radius_ablation = conformal_set_radius(
+            np.array(covariance_matrices), input_covariances, calib
+        )
+        report_set_coverage(
+            radius_ablation,
+            f"coverage_stats_conformal_prediction_sets_{suffix}",
+            f"{label.capitalize()} ablation (alpha={calib['alpha_max']:.4f}) set coverage stats:",
+        )
+        if keep_id.any():
+            report_set_coverage(
+                radius_ablation,
+                f"coverage_stats_conformal_prediction_sets_{suffix}_ood_filtered",
+                f"{label.capitalize()} ablation set coverage stats (OOD-filtered, "
+                f"in-distribution only):",
+                keep=keep_id,
+            )
 
     print("====================================")
     print("SARA Coverage Stats")

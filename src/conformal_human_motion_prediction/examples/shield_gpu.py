@@ -244,10 +244,13 @@ class GpuShieldEvaluator:
         # Accumulate the per-chunk scalar partials ON-DEVICE and pull them back once at the end.
         # Calling int() per chunk would force ~ceil(A/ac) blocking device->host syncs per pose;
         # instead each self._chunk(...) dispatches asynchronously and only the single int() barrier
-        # below waits, so the chunk kernels pipeline on the GPU. (Capturing failures does add a
-        # per-chunk sync to inspect the mask -- acceptable, as that path is only for debug dumps.)
+        # below waits, so the chunk kernels pipeline on the GPU. Capturing failures keeps that
+        # property: the masks stay on the device until the one barrier has revealed whether this
+        # pose produced *any* verified-but-contact pair, which for a working shield it almost
+        # never does -- so the capture path costs nothing on the overwhelming majority of poses.
         totals = None
         failures = res.get("failures")
+        masks = [] if self.capture_failures else None
         for c0 in range(0, A, ac):
             idx = active_idx[c0:c0 + ac]
             cm = np.ones(idx.size, np.float64)
@@ -258,15 +261,19 @@ class GpuShieldEvaluator:
             part = self._chunk(P1r, P2r, jnp.asarray(idx), jnp.asarray(cm, self.f))
             scal = part[:5]
             totals = scal if totals is None else tuple(t + p for t, p in zip(totals, scal))
-            if self.capture_failures:
-                vc_np = np.asarray(part[5])               # [nt, ac] int8 verified-but-contact
-                if vc_np.any():
-                    vu_np = np.asarray(part[6])
-                    tl, jcol = np.nonzero(vc_np)          # padded cols have cm=0 -> never flagged
-                    for ti, j in zip(tl.tolist(), jcol.tolist()):
-                        failures.append((ti, int(active_idx[c0 + j]), bool(vu_np[ti, j])))
+            if masks is not None:
+                masks.append((c0, part[5], part[6]))       # device-resident, pulled only if needed
 
         NVt, Ct, Ut, VCt, VUt = (int(x) for x in totals)   # single device->host sync per pose
+        if masks and VCt:
+            for c0, vc, vu in masks:
+                vc_np = np.asarray(vc)                     # [nt, ac] int8 verified-but-contact
+                if not vc_np.any():
+                    continue
+                vu_np = np.asarray(vu)
+                tl, jcol = np.nonzero(vc_np)               # padded cols have cm=0 -> never flagged
+                for ti, j in zip(tl.tolist(), jcol.tolist()):
+                    failures.append((ti, int(active_idx[c0 + j]), bool(vu_np[ti, j])))
         res["n_verified"] = nt * M - NVt
         res["n_contact"] = Ct
         res["n_unsafe"] = Ut

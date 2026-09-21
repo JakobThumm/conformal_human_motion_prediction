@@ -28,7 +28,9 @@ intersects any true human sphere; ``unsafe_contact`` iff such a contact occurs w
 contacting robot link's true speed exceeds ``V_ROBOT_ISO``.
 
 We report how often ``verified`` pairs nevertheless had a contact / unsafe contact -- the rate at
-which the shield is fooled.
+which the shield is fooled. The **certified dangerous failure** is ``verified & contact`` (any
+contact speed); that count drives the ISO 13849-1 PFH_D bound below. ``verified & unsafe_contact``
+is an internal diagnostic on the same runs and is never the certified failure event.
 
 Run::
 
@@ -88,45 +90,16 @@ from conformal_human_motion_prediction.utils.eval_utils import (
     get_too_fast_human_movement,
 )
 from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
-    confidence_tag,
+    confidence_tag, pfh_d_upper_bound, pl_from_pfh,
 )
 
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 N_LINKS = 7  # robot capsules per interval (cap_r_0 .. cap_r_6)
 
-# ISO 13849-1 Performance Levels, keyed by the PFH_D band [lo, hi) (failures per hour).
-PL_BANDS = [
-    ("e", 1e-8, 1e-7),
-    ("d", 1e-7, 1e-6),
-    ("c", 1e-6, 3e-6),
-    ("b", 3e-6, 1e-5),
-    ("a", 1e-5, 1e-4),
-]
-
-
-def pl_from_pfh(pfh):
-    """Map a PFH_D value (1/h) to the achievable ISO 13849-1 Performance Level."""
-    if pfh < PL_BANDS[0][1]:
-        return "e (better than required)"
-    for name, lo, hi in PL_BANDS:
-        if lo <= pfh < hi:
-            return name
-    return "none (worse than PL a)"
-
-
-def pfh_d_upper_bound(N, k, t_cycle, confidence):
-    """One-sided upper confidence bound on PFH_D from k dangerous failures in N test cycles.
-
-    Each cycle is a Bernoulli trial; the per-cycle dangerous-failure probability gets the exact
-    Clopper-Pearson upper limit p_up = Beta.ppf(confidence, k+1, N-k) (for k=0 this is the closed
-    form 1-(1-C)^(1/N)). Converted to an hourly rate via the cycle time:
-        PFH_D = PFC_D * (3600 s/h) / t_cycle.
-    Returns (pfc_d_upper, pfh_d_upper).
-    """
-    from scipy.stats import beta
-    pfc = 1.0 if k >= N else float(beta.ppf(confidence, k + 1, N - k))
-    return pfc, pfc * 3600.0 / t_cycle
+# Placements per batched level 1-3 gate call (see pose_active_sets_batched). Big enough that the
+# per-call numpy overhead vanishes, small enough that the survivor index lists stay small.
+GATE_BLOCK = 100_000
 
 
 def write_results_csv(path, row, fieldnames):
@@ -224,8 +197,9 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     """Build per-step human occupancy spheres (centers in m, radii in m).
 
     Returns horizon_times [S], pred_centers [M,S,J,3], pred_r [M,S,J],
-    true_centers [M,S,J,3], true_r [M,S,J]. Step 0 is the current (observed) pose;
-    steps 1..PH are the prediction horizon at (t)*dt seconds.
+    true_centers [M,S,J,3], true_r [M,S,J], human_input [M,...] and ``idx`` (the results-file row
+    index of each retained sample, so a caller can trace a sample back to the source file).
+    Step 0 is the current (observed) pose; steps 1..PH are the prediction horizon at (t)*dt seconds.
     """
     predictions = np.asarray(results["predictions"], dtype=np.float64)   # [N,PH,J,3] mm
     targets = np.asarray(results["targets"], dtype=np.float64)
@@ -233,6 +207,9 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     ood_scores = np.asarray(results["ood_scores"], dtype=np.float64)
     last_input = np.asarray(results["last_input_poses"], dtype=np.float64)
     N, PH, J, _ = predictions.shape
+    # Input covariance block of the last observed frame, before the pose is sliced out of it.
+    input_cov_block = (last_input[..., J * 3: J * 3 + J * 9]
+                       if last_input.shape[-1] >= J * 3 + J * 9 else None)
     last_input = last_input[..., : J * 3].reshape(N, J, 3)
 
     dt = 1.0 / fps
@@ -240,11 +217,33 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     if mask_ood:
         keep &= ood_scores <= ood_threshold
     if mask_too_fast:
+        # NOTE: this only differences the mocap TARGETS, and the dataset's own
+        # _filter_fast_target_motion already guarantees that span is under 2 m/s (measured max
+        # 1.999994 m/s), so this screen currently removes nothing. It is kept because it costs
+        # nothing and would fire on a results file built with the dataset filter disabled.
         too_fast = get_too_fast_human_movement(targets, 2.0, dt)  # uses V_HUMAN_ISO=2.0
         keep &= ~np.any(too_fast, axis=(1, 2))
+    # Defence in depth against the frozen-input-pose export defect (see the cov_estimated screen in
+    # datasets/h36m_motion_prediction.py). A results cloudpickle predicted BEFORE that fix still
+    # carries windows whose last observed pose is a stale copy of an earlier frame, written with an
+    # all-zero covariance; the SARA / ISO 13855 set is centred on that pose, so such a window is a
+    # guaranteed multi-metre "prediction failure" that is an artifact, not a miss. The zero
+    # covariance travels with the window inside last_input_poses, so the same exact discriminator
+    # is available here without the dataset. Re-predicting removes these upstream and this screen
+    # then finds nothing; it exists so a stale file cannot silently poison the shield numbers.
+    n_frozen = 0
+    if input_cov_block is not None:
+        estimated = np.abs(input_cov_block).max(axis=-1) > 0.0
+        n_frozen = int((keep & ~estimated).sum())
+        keep &= estimated
     idx = np.flatnonzero(keep)
     print(f"  human samples: {N} total -> {idx.size} after filtering "
           f"(ood={mask_ood}, too_fast={mask_too_fast})")
+    if n_frozen:
+        print(f"  !! dropped {n_frozen} window(s) whose last observed pose has an ALL-ZERO input "
+              f"covariance: a frozen pose-estimator frame. This results file predates the "
+              f"datasets/h36m_motion_prediction.py fix -- re-run examples.motion_prediction to "
+              f"remove them at the source.")
     if max_samples is not None and idx.size > max_samples:
         idx = rng.choice(idx, size=max_samples, replace=False)
         idx.sort()
@@ -261,8 +260,9 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     # Predicted-horizon human occupancy centers + set radius (mm -> m). Three modes:
     #   "sara"     : ISO 13855 constant-velocity reachable set. Center stays at the last observed
     #                pose; radius grows as (per-joint input uncertainty) + v_human * horizon_time.
-    #   "conformal": the conditional-conformal calibrator (replaces the affine calibration, which
-    #                under-covers conditional on input uncertainty / joint). Requires a calibrator.
+    #   "conformal": the supplied calibrator -- either the conditional-conformal one (replaces the
+    #                affine calibration, which under-covers conditional on input uncertainty /
+    #                joint) or the max-score single-threshold ablation, whichever the .npz declares.
     #   affine     : legacy fallback when no calibrator is supplied.
     # The predicted-horizon centers ("pred_horizon_centers") differ per mode: SARA is stationary at
     # the last input pose, the model modes use the predicted trajectory.
@@ -311,7 +311,7 @@ def build_human_arrays(results, fps, mask_ood, mask_too_fast, ood_threshold,
     true_r = compute_human_occupancies(true_centers, true_unc, human_radius)
 
     horizon_times = np.array([0.0] + [(t + 1) * dt for t in range(PH)])  # [S]
-    return horizon_times, pred_centers, pred_r, true_centers, true_r, human_input
+    return horizon_times, pred_centers, pred_r, true_centers, true_r, human_input, idx
 
 
 # --------------------------------------------------------------------------- geometry
@@ -491,6 +491,10 @@ def run_pose_pure(st, pose):
     rot_t, tvec = pose_rt(pose)
     p1r = st.p1 @ rot_t + tvec
     p2r = st.p2 @ rot_t + tvec
+    # ``failure_triples`` is the cheap sibling of ``save_failures``: just the indices of the
+    # verified-but-contact pairs, in the same format the GPU backend returns them, so a caller can
+    # attribute failures to (trajectory, human sample) without materialising any geometry.
+    triples = [] if getattr(st, "failure_triples", False) else None
 
     if st.overapprox:
         r_c = st.R_c @ rot_t + tvec
@@ -498,6 +502,8 @@ def run_pose_pure(st, pose):
             n_traj = len(st.traj_meta)
             c.update(total_pairs=M * n_traj, n_verified=M * n_traj,
                      n_intervals_no_truth=st.total_no_truth, n_poses_skipped=1, active=0)
+            if triples is not None:
+                c["failures"] = []
             return c
         grp_hit = np.linalg.norm(st.hsm_c - r_c, axis=1) <= st.hsm_r + st.R_r          # level 2
         active = (np.linalg.norm(st.hm_comb_c - r_c, axis=1) <= st.hm_comb_r + st.R_r) \
@@ -508,7 +514,7 @@ def run_pose_pure(st, pose):
     ai = np.flatnonzero(active)
     instances = [] if st.save_failures else None
 
-    for meta in st.traj_meta:
+    for tj, meta in enumerate(st.traj_meta):
         rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r, t_ms = meta
         not_verified = np.zeros(M, dtype=bool)
         contact = np.zeros(M, dtype=bool)
@@ -574,6 +580,9 @@ def run_pose_pure(st, pose):
         c["n_unsafe"] += int(unsafe.sum())
         c["n_verified_contact"] += int((verified & contact).sum())
         c["n_verified_unsafe"] += int((verified & unsafe).sum())
+        if triples is not None:
+            for m in np.flatnonzero(verified & contact):
+                triples.append((tj, int(m), bool(unsafe[m])))
 
         # ---- record full geometry of each verified-but-contact instance for offline debugging ----
         if instances is not None and len(instances) < st.max_failures:
@@ -597,6 +606,8 @@ def run_pose_pure(st, pose):
                     ))
     if instances is not None:
         c["instances"] = instances
+    if triples is not None:
+        c["failures"] = triples
     return c
 
 
@@ -619,11 +630,94 @@ def pose_active_set(st, pose):
     return False, np.flatnonzero(active).astype(np.int64)
 
 
-def _skipped_pose_counts(st, n_traj):
-    """Counter dict for a pose culled at level 1 (matches run_pose_pure's skip branch)."""
-    return dict(total_pairs=n_traj * st.M, n_verified=n_traj * st.M, n_contact=0, n_unsafe=0,
-                n_verified_contact=0, n_verified_unsafe=0, n_intervals_no_truth=st.total_no_truth,
-                n_pred_cand=0, n_true_cand=0, n_poses_skipped=1, active=0)
+def _pose_rot_t_batched(poses):
+    """``rot_t = Rz(yaw).T`` for a whole batch of poses -> [P,3,3]; same layout as :func:`pose_rt`."""
+    yaw = np.asarray(poses, dtype=np.float64)[:, 0]
+    c, sn = np.cos(yaw), np.sin(yaw)
+    rot_t = np.zeros((yaw.size, 3, 3), dtype=np.float64)
+    rot_t[:, 0, 0] = c
+    rot_t[:, 0, 1] = sn
+    rot_t[:, 1, 0] = -sn
+    rot_t[:, 1, 1] = c
+    rot_t[:, 2, 2] = 1.0
+    return rot_t
+
+
+def _ball_distances(centers, r_c):
+    """||centers[j] - r_c[p]|| for every (pose p, center j) -> [P,n].
+
+    Written as an explicit per-coordinate sum instead of ``norm(centers[None] - r_c[:,None],
+    axis=2)`` purely to avoid the [P,n,3] temporary (n is 57k in the paper runs). For a 3-element
+    axis numpy's norm reduces in index order too, so the arithmetic -- and therefore every
+    borderline <= decision -- is identical to the per-pose reference path.
+    """
+    acc = None
+    for k in range(3):
+        d = centers[None, :, k] - r_c[:, k: k + 1]
+        d *= d
+        acc = d if acc is None else acc + d
+    return np.sqrt(acc, out=acc)
+
+
+def pose_active_sets_batched(st, poses, max_elems=5e7):
+    """Vectorised twin of :func:`pose_active_set` over a whole batch of placements.
+
+    The per-pose gate is arithmetically trivial at small M, so a Python iteration plus its
+    temporaries cost far more than the test itself; batching moves the whole level 1-3 hierarchy
+    into a handful of numpy calls. Level 1 runs on the *entire* batch first -- it drops ~85 % of
+    placements (the robot cannot reach any human at all) at zero per-pose cost -- and only the
+    survivors pay for the [P_s, n_groups] level-2 and [P_s, M] level-3 arrays.
+
+    ``max_elems`` bounds the element count of one ``[chunk, M]`` temporary (peak RSS is ~3x that
+    in float64), so the same code serves M = 271 (failure-risk replay) and M = 57k (paper runs).
+
+    Returns ``(skip [P] bool, actives)``: ``skip[p]`` mirrors ``pose_active_set(...)[0]``, and
+    ``actives`` holds one int64 index array per *survivor*, in pose order -- i.e.
+    ``[pose_active_set(st, p)[1] for p in poses[~skip]]``.
+    """
+    poses = np.asarray(poses, dtype=np.float64)
+    P = poses.shape[0]
+    if not st.overapprox:
+        return np.zeros(P, dtype=bool), [np.arange(st.M, dtype=np.int64) for _ in range(P)]
+    if P == 0:
+        return np.zeros(0, dtype=bool), []
+
+    # r_c = st.R_c @ rot_t + tvec, batched. One einsum keeps the multiply-accumulate order of the
+    # per-pose ``R_c @ rot_t``, so no drift is introduced relative to the reference path.
+    rot_t = _pose_rot_t_batched(poses)
+    r_c = np.einsum("j,pjk->pk", st.R_c, rot_t) + poses[:, 1:4]
+
+    skip = _ball_distances(st.H_c[None], r_c)[:, 0] > st.H_r + st.R_r                  # level 1
+    surv = np.flatnonzero(~skip)
+    if surv.size == 0:
+        return skip, []
+
+    M = st.M
+    chunk = max(1, int(max_elems // max(M, st.hsm_c.shape[0], 1)))
+    actives = []
+    for c0 in range(0, surv.size, chunk):
+        rc = r_c[surv[c0: c0 + chunk]]
+        grp_hit = _ball_distances(st.hsm_c, rc) <= st.hsm_r + st.R_r                   # level 2
+        act = (_ball_distances(st.hm_comb_c, rc) <= st.hm_comb_r + st.R_r) \
+            & grp_hit[:, st.group_id]                                                  # level 3
+        actives.extend(np.flatnonzero(row).astype(np.int64) for row in act)
+    return skip, actives
+
+
+def _skipped_pose_counts(st, n_traj, n_poses=1):
+    """Counter dict for ``n_poses`` poses culled at level 1 (matches run_pose_pure's skip branch).
+
+    ``n_poses`` > 1 folds a whole batch of level-1-culled placements into one dict, so the batched
+    gate does not have to build (and accumulate) an identical dict per placement. Every field is
+    the per-pose value times ``n_poses``, i.e. exactly what the per-pose loop accumulated.
+    """
+    c = dict(total_pairs=n_poses * n_traj * st.M, n_verified=n_poses * n_traj * st.M,
+             n_contact=0, n_unsafe=0, n_verified_contact=0, n_verified_unsafe=0,
+             n_intervals_no_truth=n_poses * st.total_no_truth,
+             n_pred_cand=0, n_true_cand=0, n_poses_skipped=n_poses, active=0)
+    if getattr(st, "failure_triples", False):
+        c["failures"] = []
+    return c
 
 
 def gpu_failure_instances(st, pose, failures):
@@ -760,6 +854,228 @@ def run_cull_census(st, poses, n_traj, fine_poses, t_cycle, pose_radius):
           f"'how often is the human near the robot' for *that* placement distribution.)")
 
 
+def build_shield_state(args, results=None, subset=None):
+    """Build every pose-invariant input the shield needs, from the parsed ``args``.
+
+    This is everything :func:`main` used to inline: the settings module for ``--config``, the robot
+    trajectory CSV (+ the planning cycle time and the strided trajectory list), the conformal
+    calibrator, the human occupancy arrays, the per-step KDTrees and the level 1-5 bounding-sphere
+    hierarchy, assembled into the read-only ``st`` namespace the backends consume.
+
+    ``results`` lets a caller hand in an already-loaded results cloudpickle (so a script that
+    evaluates two human sub-populations pays the ~GB load once). ``subset`` selects a
+    sub-population of human samples: either an index array, or a callable
+    ``subset(horizon_times, pred_c, pred_r, true_c, true_r) -> idx`` invoked right after the human
+    arrays are built and *before* the trees/hierarchy, so restricting to e.g. the
+    prediction-failure windows does not pay for the geometry of the full set.
+
+    Returns a ``SimpleNamespace``; ``ctx.st`` is the shield state, the rest is what the report and
+    the CSV row need (``robot``, ``times_ms``, ``n_traj``, ``t_cycle``, ``M``/``S``/``J``, the human
+    arrays, ``keep_idx`` = the results-file row index of each retained sample, the ``rng`` *after*
+    the sample sub-sampling draw, the loaded ``calibrator`` and the ISO constants).
+    """
+    if args.config == "rgbd_yolo":
+        from conformal_human_motion_prediction.motion_prediction.rgbd_yolo_settings import (
+            COV_CALIBRATION_FACTORS, COV_CALIBRATION_CT, COV_CALIBRATION_IT, SET_LIKELIHOOD,
+            SARA_MEASUREMENT_UNCERTAINTY, OOD_THRESHOLD, HUMAN_RADIUS, V_HUMAN_ISO, V_ROBOT_ISO,
+        )
+    else:
+        from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
+            COV_CALIBRATION_FACTORS, COV_CALIBRATION_CT, COV_CALIBRATION_IT, SET_LIKELIHOOD,
+            SARA_MEASUREMENT_UNCERTAINTY, OOD_THRESHOLD, HUMAN_RADIUS, V_HUMAN_ISO, V_ROBOT_ISO,
+        )
+
+    rng = np.random.default_rng(args.seed)
+    origin = [float(x) for x in args.robot_origin.split(",")]
+
+    csv_path = os.path.join(root_dir, args.robot_csv)
+    print(f"Loading robot trajectories from {csv_path} ...")
+    robot = load_robot_trajectories(csv_path, origin)
+    all_times_ms = np.array(sorted(robot["traj_rows"].keys()))
+    # Native planning-cycle time = spacing between consecutive monitored trajectories (robust
+    # median of the grid diffs, in seconds). One monitored trajectory is planned per cycle.
+    t_cycle = args.t_cycle if args.t_cycle is not None else float(np.median(np.diff(all_times_ms))) / 1000.0
+    print(f"Planning cycle time t_cycle = {t_cycle:g} s "
+          f"({'from --t_cycle' if args.t_cycle is not None else 'derived from robot grid'})")
+    times_ms = list(all_times_ms)
+    if args.robot_stride > 1:
+        times_ms = times_ms[:: args.robot_stride]
+    if args.max_robot_timesteps is not None:
+        times_ms = times_ms[: args.max_robot_timesteps]
+    print(f"  {len(times_ms)} monitored trajectories, {len(robot['time'])} intervals total")
+
+    # Conditional-conformal calibrator for the predicted human set radius (replaces the affine
+    # calibration). Falls back to affine if the path is unset or the file is missing.
+    cc_path = args.conformal_calibrator
+    calibrator = None
+    if cc_path and cc_path.lower() != "none":
+        abs_cc = cc_path if os.path.isabs(cc_path) else os.path.join(root_dir, cc_path)
+        if os.path.exists(abs_cc):
+            calibrator = load_conformal_calibrator(abs_cc)
+            mode = calibrator.get("mode")
+            if mode == "max":
+                kind = ("max-score single-threshold ablation, alpha_max="
+                        f"{calibrator['alpha_max']:.4f}")
+            elif mode == "uncalibrated":
+                kind = ("no-calibration ablation (trusts the predicted covariance), "
+                        f"alpha=sqrt(chi2_3)={calibrator['alpha_max']:.4f}")
+            else:
+                kind = "conditional-conformal"
+            print(f"Using {kind} calibrator {abs_cc} (target coverage "
+                  f"{calibrator['level']:.4f}); affine calibration bypassed.")
+        else:
+            print(f"WARNING: conformal calibrator {abs_cc} not found -> falling back to affine "
+                  f"calibration (--calibrate={args.calibrate}).")
+    else:
+        print(f"Conformal calibrator disabled -> using affine calibration (--calibrate={args.calibrate}).")
+
+    results_file = os.path.join(root_dir, args.results_file)
+    if results is None:
+        print(f"Loading human results from {results_file} ...")
+        with open(results_file, "rb") as f:
+            results = cloudpickle.load(f)
+    else:
+        print(f"Reusing already-loaded human results from {results_file}")
+    # SARA (ISO 13855) uses its own constant-velocity reachable set and ignores the conformal
+    # calibrator entirely; make that explicit so a stray calibrator path can't leak in.
+    human_calibrator = None if args.human_set == "sara" else calibrator
+    ood_threshold = args.ood_threshold if args.ood_threshold is not None else OOD_THRESHOLD
+    if args.mask_ood:
+        print(f"OOD masking on with threshold {ood_threshold:g}"
+              + ("" if args.ood_threshold is None else " (--ood_threshold override)"))
+    horizon_times, pred_c, pred_r, true_c, true_r, human_input, keep_idx = build_human_arrays(
+        results, args.fps, args.mask_ood, args.mask_too_fast, ood_threshold,
+        SET_LIKELIHOOD, SARA_MEASUREMENT_UNCERTAINTY, HUMAN_RADIUS,
+        args.calibrate, COV_CALIBRATION_CT, COV_CALIBRATION_IT, COV_CALIBRATION_FACTORS,
+        args.max_human_samples, rng, conformal_calibrator=human_calibrator,
+        human_set=args.human_set, v_human=V_HUMAN_ISO,
+    )
+    # Sub-population hook: restrict to a caller-chosen set of samples *before* the trees and the
+    # hierarchy are built, so evaluating e.g. only the prediction-failure windows is cheap.
+    if subset is not None:
+        sel = subset(horizon_times, pred_c, pred_r, true_c, true_r) if callable(subset) else subset
+        sel = np.asarray(sel, dtype=np.int64)
+        pred_c, pred_r, true_c, true_r = pred_c[sel], pred_r[sel], true_c[sel], true_r[sel]
+        human_input, keep_idx = human_input[sel], keep_idx[sel]
+        print(f"  restricted to a sub-population of {sel.size} human sample(s)")
+    M, S, J, _ = pred_c.shape
+    if M == 0:
+        raise SystemExit("No eligible human samples after filtering — relax --mask_ood/--mask_too_fast.")
+    print(f"Predicted human occupancy model: {args.human_set}"
+          + (" (ISO 13855 constant-velocity reachable set)" if args.human_set == "sara"
+             else " (motion-model conformal/affine set)"))
+    print(f"  human horizon steps (s): {np.round(horizon_times, 3).tolist()}")
+    print(f"  max robot interval tp_end: {robot['tp_end'].max():.3f}s "
+          f"(human horizon max {horizon_times[-1]:.3f}s)")
+
+    # Per-step KDTrees over human joint centers (flattened (m,j) -> point).
+    print("Building KDTrees over human occupancies ...")
+    pred_trees, true_trees, pred_rmax, true_rmax = [], [], [], []
+    for s in range(S):
+        pred_trees.append(cKDTree(pred_c[:, s].reshape(M * J, 3)))
+        true_trees.append(cKDTree(true_c[:, s].reshape(M * J, 3)))
+        pred_rmax.append(float(pred_r[:, s].max()))
+        true_rmax.append(float(true_r[:, s].max()))
+
+    pred_r_flat = [pred_r[:, s].reshape(M * J) for s in range(S)]
+    true_r_flat = [true_r[:, s].reshape(M * J) for s in range(S)]
+    pred_c_flat = [pred_c[:, s].reshape(M * J, 3) for s in range(S)]
+    true_c_flat = [true_c[:, s].reshape(M * J, 3) for s in range(S)]
+
+    # Multi-level bounding-sphere hierarchy for hierarchical culling.
+    if args.overapprox:
+        kmax = min(int(np.searchsorted(horizon_times, robot["tp_end"].max(), side="left")), S - 1)
+        print(f"Precomputing human over-approximation hierarchy (cumulative steps 0..{kmax}) ...")
+        # Level 5 (finest): per-motion, per-body, per-cumulative-interval (H_MTI).
+        oa_pred_c, oa_pred_r = cumulative_human_overapprox(pred_c, pred_r, kmax)
+        oa_true_c, oa_true_r = cumulative_human_overapprox(true_c, true_r, kmax)
+        # Level 4: per-motion, full-human, per-interval (H_MI = o over bodies).
+        hmi_pred_c, hmi_pred_r = bound_spheres(oa_pred_c, oa_pred_r)   # [M,K1,3], [M,K1]
+        hmi_true_c, hmi_true_r = bound_spheres(oa_true_c, oa_true_r)
+        # Level 1-3 use the combined (pred U true) full-interval sphere per motion: a coarse cull
+        # means neither predicted nor true occupancy intersects -> verified AND contact-free.
+        hm_c = np.stack([hmi_pred_c[:, kmax], hmi_true_c[:, kmax]], axis=1)   # [M,2,3]
+        hm_r = np.stack([hmi_pred_r[:, kmax], hmi_true_r[:, kmax]], axis=1)   # [M,2]
+        hm_comb_c, hm_comb_r = bound_spheres(hm_c, hm_r)                      # H_M [M,3],[M]
+        # Level 2: set-of-motions groups (consecutive samples are spatially coherent).
+        sgrp = max(1, args.motion_group_size)
+        group_id = np.arange(M) // sgrp
+        n_groups = int(group_id[-1]) + 1
+        hsm_c = np.empty((n_groups, 3))
+        hsm_r = np.empty(n_groups)
+        for g in range(n_groups):
+            sel = group_id == g
+            c, r = bound_spheres(hm_comb_c[sel][None], hm_comb_r[sel][None])
+            hsm_c[g], hsm_r[g] = c[0], r[0]
+        # Level 1: global human sphere H.
+        H_c, H_r = bound_spheres(hm_comb_c[None], hm_comb_r[None])
+        H_c, H_r = H_c[0], float(H_r[0])
+    # Pose-invariant per-trajectory schedule: future interval-0 rows (true robot state), the
+    # cumulative over-approx step k covering the trajectory duration, and the max V_HUMAN_ISO
+    # bridge on the trajectory. Only the robot capsule geometry changes between poses.
+    rr, spd = robot["r"], robot["speed"]
+    traj_meta = []
+    glob_c, glob_r = [], []   # all base-frame robot link spheres, for the global sphere R
+    for t_ms in times_ms:
+        rows = np.asarray(robot["traj_rows"][t_ms], dtype=np.int64)
+        fut_ms = (t_ms + np.round(robot["tp_start"][rows] * 1000)).astype(np.int64)
+        frow_rows = np.array([robot["interval0_row"].get(int(f), -1) for f in fut_ms], dtype=np.int64)
+        valid = frow_rows >= 0
+        rcp_c = rcp_r = rct_c = rct_r = None
+        if args.overapprox:
+            tps = robot["tp_start"][rows]
+            sp_idx = np.clip(np.searchsorted(horizon_times, tps, side="right") - 1, 0, S - 1)
+            max_addr = float((tps - horizon_times[sp_idx]).max()) * V_HUMAN_ISO
+            k = min(int(np.searchsorted(horizon_times, robot["tp_end"][rows].max(), side="left")), kmax)
+            # Base-frame per-link spheres: predicted (this traj's capsules + bridge) and true
+            # (the future interval-0 capsules). Transformed per pose; bounded once into R.
+            rcp_c, rcp_r = robot_trajectory_overapprox(robot["p1"], robot["p2"], rr, rows)
+            rcp_r = rcp_r + max_addr
+            glob_c.append(rcp_c)
+            glob_r.append(rcp_r)
+            if valid.any():
+                rct_c, rct_r = robot_trajectory_overapprox(robot["p1"], robot["p2"], rr, frow_rows[valid])
+                glob_c.append(rct_c)
+                glob_r.append(rct_r)
+        else:
+            max_addr, k = 0.0, 0
+        traj_meta.append((rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r, t_ms))
+
+    total_no_truth = sum(int((~m[2]).sum()) for m in traj_meta)  # for the level-1 pose skip
+    if args.overapprox:
+        R_c, R_r = bound_spheres(np.concatenate(glob_c)[None], np.concatenate(glob_r)[None])
+        R_c, R_r = R_c[0], float(R_r[0])
+
+    # Read-only state shared with (forked) pose workers.
+    st = SimpleNamespace(
+        M=M, J=J, overapprox=args.overapprox, traj_meta=traj_meta, total_no_truth=total_no_truth,
+        tp_start=robot["tp_start"], tp_end=robot["tp_end"], rr=rr, spd=spd,
+        p1=robot["p1"], p2=robot["p2"],
+        horizon_times=horizon_times, v_human=V_HUMAN_ISO, v_robot=V_ROBOT_ISO,
+        pred_trees=pred_trees, true_trees=true_trees, pred_rmax=pred_rmax, true_rmax=true_rmax,
+        pred_c_flat=pred_c_flat, pred_r_flat=pred_r_flat, true_c_flat=true_c_flat, true_r_flat=true_r_flat,
+        pred_c=pred_c, pred_r=pred_r, true_c=true_c, true_r=true_r, human_input=human_input,
+        save_failures=bool(args.save_failures), max_failures=args.max_failures,
+        # Callers that only need *which* pairs failed (not their geometry) flip this to True.
+        failure_triples=False,
+    )
+    if args.overapprox:
+        st.__dict__.update(
+            oa_pred_c=oa_pred_c, oa_pred_r=oa_pred_r, oa_true_c=oa_true_c, oa_true_r=oa_true_r,
+            hmi_pred_c=hmi_pred_c, hmi_pred_r=hmi_pred_r, hmi_true_c=hmi_true_c, hmi_true_r=hmi_true_r,
+            hm_comb_c=hm_comb_c, hm_comb_r=hm_comb_r, hsm_c=hsm_c, hsm_r=hsm_r,
+            group_id=group_id, H_c=H_c, H_r=H_r, R_c=R_c, R_r=R_r,
+        )
+
+    return SimpleNamespace(
+        st=st, robot=robot, times_ms=times_ms, n_traj=len(times_ms), t_cycle=t_cycle,
+        M=M, S=S, J=J, horizon_times=horizon_times, keep_idx=keep_idx,
+        pred_c=pred_c, pred_r=pred_r, true_c=true_c, true_r=true_r, human_input=human_input,
+        rng=rng, calibrator=calibrator, v_human=V_HUMAN_ISO, v_robot=V_ROBOT_ISO,
+        set_likelihood=SET_LIKELIHOOD,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--robot_csv", type=str,
@@ -821,10 +1137,16 @@ def main():
                              "(only used as the fallback when --conformal_calibrator is unset/missing).")
     parser.add_argument("--conformal_calibrator", type=str,
                         default="models/motion_prediction/conformal_calibration/conformal_calibrator.npz",
-                        help="Path to a conditional-conformal calibrator .npz (from "
+                        help="Path to a conformal calibrator .npz (from "
                              "motion_prediction.conformal_calibration). Used to form the predicted "
-                             "human set radius, replacing the affine calibration. Set to '' / 'none' "
-                             "to force the affine fallback; a missing file also falls back.")
+                             "human set radius, replacing the affine calibration. The file's 'mode' "
+                             "decides the rule: 'conditional' = the q_hat(joint, frame, input-unc) "
+                             "grid, 'max' = the single-threshold ablation r = alpha_max * "
+                             "sqrt(lambda_max(cov)), 'uncalibrated' = the no-calibration ablation "
+                             "r = sqrt(chi2_3(level)) * sqrt(lambda_max(cov)) -- pass an ablation's "
+                             "own .npz to get that row. "
+                             "Set to '' / 'none' to force the affine fallback; a missing file also "
+                             "falls back.")
     parser.add_argument("--overapprox", action=argparse.BooleanOptionalAction, default=True,
                         help="Use the multi-level bounding-sphere hierarchy to cull far humans.")
     parser.add_argument("--cull_census", type=int, default=None,
@@ -867,122 +1189,10 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    if args.config == "rgbd_yolo":
-        from conformal_human_motion_prediction.motion_prediction.rgbd_yolo_settings import (
-            COV_CALIBRATION_FACTORS, COV_CALIBRATION_CT, COV_CALIBRATION_IT, SET_LIKELIHOOD,
-            SARA_MEASUREMENT_UNCERTAINTY, OOD_THRESHOLD, HUMAN_RADIUS, V_HUMAN_ISO, V_ROBOT_ISO,
-        )
-    else:
-        from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
-            COV_CALIBRATION_FACTORS, COV_CALIBRATION_CT, COV_CALIBRATION_IT, SET_LIKELIHOOD,
-            SARA_MEASUREMENT_UNCERTAINTY, OOD_THRESHOLD, HUMAN_RADIUS, V_HUMAN_ISO, V_ROBOT_ISO,
-        )
-
-    rng = np.random.default_rng(args.seed)
-    origin = [float(x) for x in args.robot_origin.split(",")]
-
-    csv_path = os.path.join(root_dir, args.robot_csv)
-    print(f"Loading robot trajectories from {csv_path} ...")
-    robot = load_robot_trajectories(csv_path, origin)
-    all_times_ms = np.array(sorted(robot["traj_rows"].keys()))
-    # Native planning-cycle time = spacing between consecutive monitored trajectories (robust
-    # median of the grid diffs, in seconds). One monitored trajectory is planned per cycle.
-    t_cycle = args.t_cycle if args.t_cycle is not None else float(np.median(np.diff(all_times_ms))) / 1000.0
-    print(f"Planning cycle time t_cycle = {t_cycle:g} s "
-          f"({'from --t_cycle' if args.t_cycle is not None else 'derived from robot grid'})")
-    times_ms = list(all_times_ms)
-    if args.robot_stride > 1:
-        times_ms = times_ms[:: args.robot_stride]
-    if args.max_robot_timesteps is not None:
-        times_ms = times_ms[: args.max_robot_timesteps]
-    print(f"  {len(times_ms)} monitored trajectories, {len(robot['time'])} intervals total")
-
-    # Conditional-conformal calibrator for the predicted human set radius (replaces the affine
-    # calibration). Falls back to affine if the path is unset or the file is missing.
-    cc_path = args.conformal_calibrator
-    calibrator = None
-    if cc_path and cc_path.lower() != "none":
-        abs_cc = cc_path if os.path.isabs(cc_path) else os.path.join(root_dir, cc_path)
-        if os.path.exists(abs_cc):
-            calibrator = load_conformal_calibrator(abs_cc)
-            print(f"Using conditional-conformal calibrator {abs_cc} (target coverage "
-                  f"{calibrator['level']:.4f}); affine calibration bypassed.")
-        else:
-            print(f"WARNING: conformal calibrator {abs_cc} not found -> falling back to affine "
-                  f"calibration (--calibrate={args.calibrate}).")
-    else:
-        print(f"Conformal calibrator disabled -> using affine calibration (--calibrate={args.calibrate}).")
-
-    results_file = os.path.join(root_dir, args.results_file)
-    print(f"Loading human results from {results_file} ...")
-    with open(results_file, "rb") as f:
-        results = cloudpickle.load(f)
-    # SARA (ISO 13855) uses its own constant-velocity reachable set and ignores the conformal
-    # calibrator entirely; make that explicit so a stray calibrator path can't leak in.
-    human_calibrator = None if args.human_set == "sara" else calibrator
-    ood_threshold = args.ood_threshold if args.ood_threshold is not None else OOD_THRESHOLD
-    if args.mask_ood:
-        print(f"OOD masking on with threshold {ood_threshold:g}"
-              + ("" if args.ood_threshold is None else " (--ood_threshold override)"))
-    horizon_times, pred_c, pred_r, true_c, true_r, human_input = build_human_arrays(
-        results, args.fps, args.mask_ood, args.mask_too_fast, ood_threshold,
-        SET_LIKELIHOOD, SARA_MEASUREMENT_UNCERTAINTY, HUMAN_RADIUS,
-        args.calibrate, COV_CALIBRATION_CT, COV_CALIBRATION_IT, COV_CALIBRATION_FACTORS,
-        args.max_human_samples, rng, conformal_calibrator=human_calibrator,
-        human_set=args.human_set, v_human=V_HUMAN_ISO,
-    )
-    M, S, J, _ = pred_c.shape
-    if M == 0:
-        raise SystemExit("No eligible human samples after filtering — relax --mask_ood/--mask_too_fast.")
-    print(f"Predicted human occupancy model: {args.human_set}"
-          + (" (ISO 13855 constant-velocity reachable set)" if args.human_set == "sara"
-             else " (motion-model conformal/affine set)"))
-    print(f"  human horizon steps (s): {np.round(horizon_times, 3).tolist()}")
-    print(f"  max robot interval tp_end: {robot['tp_end'].max():.3f}s "
-          f"(human horizon max {horizon_times[-1]:.3f}s)")
-
-    # Per-step KDTrees over human joint centers (flattened (m,j) -> point).
-    print("Building KDTrees over human occupancies ...")
-    pred_trees, true_trees, pred_rmax, true_rmax = [], [], [], []
-    for s in range(S):
-        pred_trees.append(cKDTree(pred_c[:, s].reshape(M * J, 3)))
-        true_trees.append(cKDTree(true_c[:, s].reshape(M * J, 3)))
-        pred_rmax.append(float(pred_r[:, s].max()))
-        true_rmax.append(float(true_r[:, s].max()))
-
-    pred_r_flat = [pred_r[:, s].reshape(M * J) for s in range(S)]
-    true_r_flat = [true_r[:, s].reshape(M * J) for s in range(S)]
-    pred_c_flat = [pred_c[:, s].reshape(M * J, 3) for s in range(S)]
-    true_c_flat = [true_c[:, s].reshape(M * J, 3) for s in range(S)]
-
-    # Multi-level bounding-sphere hierarchy for hierarchical culling.
-    if args.overapprox:
-        kmax = min(int(np.searchsorted(horizon_times, robot["tp_end"].max(), side="left")), S - 1)
-        print(f"Precomputing human over-approximation hierarchy (cumulative steps 0..{kmax}) ...")
-        # Level 5 (finest): per-motion, per-body, per-cumulative-interval (H_MTI).
-        oa_pred_c, oa_pred_r = cumulative_human_overapprox(pred_c, pred_r, kmax)
-        oa_true_c, oa_true_r = cumulative_human_overapprox(true_c, true_r, kmax)
-        # Level 4: per-motion, full-human, per-interval (H_MI = o over bodies).
-        hmi_pred_c, hmi_pred_r = bound_spheres(oa_pred_c, oa_pred_r)   # [M,K1,3], [M,K1]
-        hmi_true_c, hmi_true_r = bound_spheres(oa_true_c, oa_true_r)
-        # Level 1-3 use the combined (pred U true) full-interval sphere per motion: a coarse cull
-        # means neither predicted nor true occupancy intersects -> verified AND contact-free.
-        hm_c = np.stack([hmi_pred_c[:, kmax], hmi_true_c[:, kmax]], axis=1)   # [M,2,3]
-        hm_r = np.stack([hmi_pred_r[:, kmax], hmi_true_r[:, kmax]], axis=1)   # [M,2]
-        hm_comb_c, hm_comb_r = bound_spheres(hm_c, hm_r)                      # H_M [M,3],[M]
-        # Level 2: set-of-motions groups (consecutive samples are spatially coherent).
-        sgrp = max(1, args.motion_group_size)
-        group_id = np.arange(M) // sgrp
-        n_groups = int(group_id[-1]) + 1
-        hsm_c = np.empty((n_groups, 3))
-        hsm_r = np.empty(n_groups)
-        for g in range(n_groups):
-            sel = group_id == g
-            c, r = bound_spheres(hm_comb_c[sel][None], hm_comb_r[sel][None])
-            hsm_c[g], hsm_r[g] = c[0], r[0]
-        # Level 1: global human sphere H.
-        H_c, H_r = bound_spheres(hm_comb_c[None], hm_comb_r[None])
-        H_c, H_r = H_c[0], float(H_r[0])
+    ctx = build_shield_state(args)
+    st, times_ms, t_cycle = ctx.st, ctx.times_ms, ctx.t_cycle
+    M, calibrator, rng = ctx.M, ctx.calibrator, ctx.rng
+    V_ROBOT_ISO, SET_LIKELIHOOD = ctx.v_robot, ctx.set_likelihood
     n_pred_cand = 0  # level-5 survivors (sum over pose,traj) for cull-rate reporting
     n_true_cand = 0
 
@@ -995,60 +1205,6 @@ def main():
     n_verified_unsafe = 0
     n_intervals_no_truth = 0  # intervals whose future robot timestep is past the log end
 
-    # Pose-invariant per-trajectory schedule: future interval-0 rows (true robot state), the
-    # cumulative over-approx step k covering the trajectory duration, and the max V_HUMAN_ISO
-    # bridge on the trajectory. Only the robot capsule geometry changes between poses.
-    rr, spd = robot["r"], robot["speed"]
-    traj_meta = []
-    glob_c, glob_r = [], []   # all base-frame robot link spheres, for the global sphere R
-    for t_ms in times_ms:
-        rows = np.asarray(robot["traj_rows"][t_ms], dtype=np.int64)
-        fut_ms = (t_ms + np.round(robot["tp_start"][rows] * 1000)).astype(np.int64)
-        frow_rows = np.array([robot["interval0_row"].get(int(f), -1) for f in fut_ms], dtype=np.int64)
-        valid = frow_rows >= 0
-        rcp_c = rcp_r = rct_c = rct_r = None
-        if args.overapprox:
-            tps = robot["tp_start"][rows]
-            sp_idx = np.clip(np.searchsorted(horizon_times, tps, side="right") - 1, 0, S - 1)
-            max_addr = float((tps - horizon_times[sp_idx]).max()) * V_HUMAN_ISO
-            k = min(int(np.searchsorted(horizon_times, robot["tp_end"][rows].max(), side="left")), kmax)
-            # Base-frame per-link spheres: predicted (this traj's capsules + bridge) and true
-            # (the future interval-0 capsules). Transformed per pose; bounded once into R.
-            rcp_c, rcp_r = robot_trajectory_overapprox(robot["p1"], robot["p2"], rr, rows)
-            rcp_r = rcp_r + max_addr
-            glob_c.append(rcp_c)
-            glob_r.append(rcp_r)
-            if valid.any():
-                rct_c, rct_r = robot_trajectory_overapprox(robot["p1"], robot["p2"], rr, frow_rows[valid])
-                glob_c.append(rct_c)
-                glob_r.append(rct_r)
-        else:
-            max_addr, k = 0.0, 0
-        traj_meta.append((rows, frow_rows, valid, k, max_addr, rcp_c, rcp_r, rct_c, rct_r, t_ms))
-
-    total_no_truth = sum(int((~m[2]).sum()) for m in traj_meta)  # for the level-1 pose skip
-    if args.overapprox:
-        R_c, R_r = bound_spheres(np.concatenate(glob_c)[None], np.concatenate(glob_r)[None])
-        R_c, R_r = R_c[0], float(R_r[0])
-
-    # Read-only state shared with (forked) pose workers.
-    st = SimpleNamespace(
-        M=M, J=J, overapprox=args.overapprox, traj_meta=traj_meta, total_no_truth=total_no_truth,
-        tp_start=robot["tp_start"], tp_end=robot["tp_end"], rr=rr, spd=spd,
-        p1=robot["p1"], p2=robot["p2"],
-        horizon_times=horizon_times, v_human=V_HUMAN_ISO, v_robot=V_ROBOT_ISO,
-        pred_trees=pred_trees, true_trees=true_trees, pred_rmax=pred_rmax, true_rmax=true_rmax,
-        pred_c_flat=pred_c_flat, pred_r_flat=pred_r_flat, true_c_flat=true_c_flat, true_r_flat=true_r_flat,
-        pred_c=pred_c, pred_r=pred_r, true_c=true_c, true_r=true_r, human_input=human_input,
-        save_failures=bool(args.save_failures), max_failures=args.max_failures,
-    )
-    if args.overapprox:
-        st.__dict__.update(
-            oa_pred_c=oa_pred_c, oa_pred_r=oa_pred_r, oa_true_c=oa_true_c, oa_true_r=oa_true_r,
-            hmi_pred_c=hmi_pred_c, hmi_pred_r=hmi_pred_r, hmi_true_c=hmi_true_c, hmi_true_r=hmi_true_r,
-            hm_comb_c=hm_comb_c, hm_comb_r=hm_comb_r, hsm_c=hsm_c, hsm_r=hsm_r,
-            group_id=group_id, H_c=H_c, H_r=H_r, R_c=R_c, R_r=R_r,
-        )
 
     n_traj = len(times_ms)
     # Derive the number of robot poses from a target test-cycle count N so every method reaches
@@ -1114,7 +1270,7 @@ def main():
     # the cumulative dangerous-failure counts ride along in the postfix, refreshed every 100 poses.
     bar = tqdm(total=len(poses), desc="poses", unit="pose", dynamic_ncols=True, mininterval=2.0)
 
-    def accumulate(cc):
+    def accumulate(cc, n_bar=1):
         nonlocal total_pairs, n_verified, n_contact, n_unsafe, n_verified_contact
         nonlocal n_verified_unsafe, n_intervals_no_truth, n_pred_cand, n_true_cand, n_poses_skipped
         nonlocal n_l3_active
@@ -1127,8 +1283,10 @@ def main():
         n_l3_active += cc["active"]
         if "instances" in cc:
             failure_instances.extend(cc["instances"])
-        bar.update(1)
-        if bar.n % 100 == 0 or bar.n == bar.total:
+        bar.update(n_bar)
+        # ``bar.n % 100 < n_bar`` is the batch-safe form of the old ``% 100 == 0``: identical for
+        # n_bar = 1, and it still fires once whenever a bulk update crosses a multiple of 100.
+        if bar.n % 100 < n_bar or bar.n == bar.total:
             bar.set_postfix_str(f"v&contact={n_verified_contact:,} "
                                 f"v&unsafe={n_verified_unsafe:,} "
                                 f"L1-culled={n_poses_skipped:,}", refresh=False)
@@ -1137,18 +1295,23 @@ def main():
         from conformal_human_motion_prediction.examples.shield_gpu import GpuShieldEvaluator
         ev = GpuShieldEvaluator(st, n_traj, dtype=args.gpu_dtype, a_chunk=args.gpu_a_chunk,
                                 capture_failures=bool(args.save_failures))
-        for pose in poses:
-            skip, ai = pose_active_set(st, pose)
-            if skip:
-                cc = _skipped_pose_counts(st, n_traj)
-            else:
+        # Levels 1-3 are gated for a whole block of placements at once (the per-pose version was
+        # the bottleneck: trivial arithmetic, one Python iteration each). Only the survivors then
+        # cost a GPU dispatch; the level-1-culled majority is accounted for in bulk.
+        for b0 in range(0, len(poses), GATE_BLOCK):
+            pblock = poses[b0: b0 + GATE_BLOCK]
+            skip, actives = pose_active_sets_batched(st, pblock)
+            n_skipped = int(skip.sum())
+            if n_skipped:
+                accumulate(_skipped_pose_counts(st, n_traj, n_skipped), n_bar=n_skipped)
+            for pose, ai in zip(pblock[~skip], actives):
                 cc = ev.eval_active(pose, ai)
                 if args.save_failures and cc.get("failures"):
                     # Reconstruct full geometry for the (rare) verified-but-contact pairs the GPU
                     # flagged; cap per pose like the CPU path does.
                     cc["instances"] = gpu_failure_instances(
                         st, pose, cc["failures"][:args.max_failures])
-            accumulate(cc)
+                accumulate(cc)
     elif n_workers > 1:
         global _WORKER_ST
         _WORKER_ST = st  # set before forking so workers inherit it copy-on-write
@@ -1201,11 +1364,13 @@ def main():
     print(f"True contact                : {n_contact:,}  ({pct(n_contact, total_pairs):.3f}% of trials)")
     print(f"True unsafe contact         : {n_unsafe:,}  ({pct(n_unsafe, total_pairs):.3f}% of trials)")
     print("-------------------------------------------------------------------")
+    # The first count is the certified dangerous failure (see the PFH_D block below); the
+    # speed-gated second one is an internal diagnostic that never feeds PFH_D.
     print(">>> Verified BUT contact        : "
           f"{n_verified_contact:,}  "
           f"({pct(n_verified_contact, n_verified):.4f}% of verified, "
           f"{pct(n_verified_contact, total_pairs):.4f}% of trials)")
-    print(">>> Verified BUT unsafe contact : "
+    print(f">>> Verified BUT unsafe contact : (diagnostic only, speed > {V_ROBOT_ISO} m/s) "
           f"{n_verified_unsafe:,}  "
           f"({pct(n_verified_unsafe, n_verified):.4f}% of verified, "
           f"{pct(n_verified_unsafe, total_pairs):.4f}% of trials)")
@@ -1213,19 +1378,22 @@ def main():
 
     # ----------------------------------------------------------------- PFH_D / Performance Level
     # A "dangerous failure" is the shield declaring a trajectory verified while the ground truth
-    # has an UNSAFE contact (contact at robot speed > V_ROBOT_ISO). Each (pose, traj, human) trial
-    # is one safety-function cycle; we bound the per-cycle failure probability (Clopper-Pearson,
-    # one-sided) and convert to PFH_D = PFC_D * 3600 / t_cycle.
+    # has a CONTACT -- any contact, regardless of the contacting link's speed. This is the event
+    # the results tables report as `c_safe & contact`, so the bound and the failure count next to
+    # it in the table always come from the same k. (The speed-gated `n_verified_unsafe` count
+    # stays in the CSV as an internal diagnostic only; it is never the certified failure event.)
+    # Each (pose, traj, human) trial is one safety-function cycle; we bound the per-cycle failure
+    # probability (Clopper-Pearson, one-sided) and convert to PFH_D = PFC_D * 3600 / t_cycle.
     confidences = [0.99, 0.999, 0.9999, 0.99999, 0.999999]
     print("\n============== PFH_D (dangerous failure rate) per ISO 13849-1 ==============")
-    print(f"Dangerous failure = verified BUT unsafe contact (speed > V_ROBOT_ISO = {V_ROBOT_ISO} m/s)")
-    print(f"Test cycles N = {total_pairs:,}   dangerous failures k = {n_verified_unsafe:,}   "
+    print("Dangerous failure = verified BUT contact (any contact speed)")
+    print(f"Test cycles N = {total_pairs:,}   dangerous failures k = {n_verified_contact:,}   "
           f"t_cycle = {t_cycle:g} s")
     print(f"{'confidence':>10} | {'PFC_D upper (1/cyc)':>20} | {'PFH_D upper (1/h)':>18} | PL")
     print("-" * 72)
     pfh_by_conf = {}
     for C in confidences:
-        pfc, pfh = pfh_d_upper_bound(total_pairs, n_verified_unsafe, t_cycle, C)
+        pfc, pfh = pfh_d_upper_bound(total_pairs, n_verified_contact, t_cycle, C)
         pfh_by_conf[C] = (pfc, pfh, pl_from_pfh(pfh))
         print(f"{confidence_tag(C):>10} | {pfc:>20.3e} | {pfh:>18.3e} | {pl_from_pfh(pfh)}")
     print("=" * 76)
@@ -1236,9 +1404,15 @@ def main():
         # the loaded calibrator (conditional-conformal) or fall back to affine/raw.
         used_calibrator = None if args.human_set == "sara" else calibrator
         set_likelihood = float(used_calibrator["level"]) if used_calibrator is not None else float(SET_LIKELIHOOD)
-        set_kind = ("sara" if args.human_set == "sara"
-                    else ("conditional_conformal" if used_calibrator is not None
-                          else ("affine" if args.calibrate else "raw")))
+        if args.human_set == "sara":
+            set_kind = "sara"
+        elif used_calibrator is None:
+            set_kind = "affine" if args.calibrate else "raw"
+        else:
+            # "max_conformal" / "uncalibrated" are what conformal_results_common.shield_method_key
+            # keys the ablation rows on -- keep the two in sync.
+            set_kind = {"max": "max_conformal", "uncalibrated": "uncalibrated"}.get(
+                used_calibrator.get("mode"), "conditional_conformal")
         row = dict(
             results_file=os.path.basename(args.results_file), human_set=args.human_set,
             set_kind=set_kind,

@@ -23,6 +23,34 @@ q_hat monotone in input-uncertainty so the data-starved high-uncertainty tail ex
 Because q_hat can be negative, OVER-covered strata are tightened (better availability) while
 UNDER-covered strata are inflated -- the point is to spend volume only where coverage is missing.
 
+As an ABLATION (``--method max``) this module also calibrates the single-threshold alternative:
+
+    A_max(z_i) = max_{j,k} ||d_k^j|| / sqrt(lambda_max(C_k^j)),    r_cal = alpha_max * sqrt(lambda_max(C_k^j))
+
+i.e. one scalar alpha_max, the split-conformal quantile of the per-sample MAXIMUM normalized error
+over all J*T joint-timesteps, at level 1-eps. Because the score is a max over the whole sample, all
+J*T sets hold *simultaneously* with probability >= 1-eps -- a stronger (per-sample, family-wise)
+guarantee than the conditional calibrator's per-(joint, frame) marginal one, bought by inflating
+every set with the single worst-case factor and by giving up all conditioning on input uncertainty
+and joint.
+
+A second ABLATION (``--method uncalibrated``) skips calibration entirely and simply TRUSTS the
+predicted covariance -- the training-time set:
+
+    alpha_k^j = sqrt(chi2_3(1-eps))  (a constant, 4.5943 at 1-eps = 0.9999),
+    r = sqrt(chi2_3(1-eps)) * sqrt(lambda_max(C_k^j))
+
+i.e. the 3-dof Mahalanobis ellipsoid at level 1-eps, collapsed to a sphere via lambda_max. No
+calibration data is used, so there is no conformal guarantee at all: coverage holds only insofar as
+the model's covariance is honest out of sample. It shares the max-score ablation's apply rule
+(alpha * sigma_max), so it deploys through the same ``alpha_max`` field -- only the *source* of
+alpha differs (fixed Gaussian factor vs. conformal quantile). Note that by construction this equals
+the raw model radius, i.e. the ``--baseline raw`` row.
+
+All three are always computed and reported side by side; ``--method`` only selects which one is
+written to the deployable calibrator .npz (``mode`` field), so the rest of the pipeline picks it up
+transparently through ``inference_helper.load_conformal_calibrator``.
+
 Honest split discipline: fit on a calibration split, report on a disjoint test split (default:
 split the validation results 50/50 by sample; or pass --calib_file/--test_file explicitly).
 
@@ -38,6 +66,7 @@ from pathlib import Path
 
 import cloudpickle
 import numpy as np
+from scipy.stats import chi2
 
 import matplotlib
 matplotlib.use("Agg")
@@ -47,6 +76,7 @@ from conformal_human_motion_prediction.motion_prediction.inference_helper import
 from conformal_human_motion_prediction.utils.eval_utils import (
     compute_sara_predictions,
     convert_covariance_matrices_to_set,
+    covariance_sigma_max,
 )
 from conformal_human_motion_prediction.pose_estimation.h36m_settings import JOINT_NAMES_13
 
@@ -154,6 +184,87 @@ def apply_calibrator(calib, r_model, input_unc, joint_idx, frame_idx):
     return np.maximum(r_model + calib["q_grid"][joint_idx, frame_idx, b], 0.0)
 
 
+def apply_calibrator_grid(calib, r_model, in_set):
+    """``apply_calibrator`` on full [N,T,J] arrays. ``in_set`` is the per-joint input set radius [N,J] in m."""
+    N, T, J = r_model.shape
+    in_TJ = np.repeat(in_set[:, None, :], T, axis=1)                                  # [N,T,J] m
+    jj = np.broadcast_to(np.arange(J)[None, None, :], (N, T, J))
+    tt = np.broadcast_to(np.arange(T)[None, :, None], (N, T, J))
+    return apply_calibrator(calib, r_model, in_TJ, jj, tt)
+
+
+# --------------------------------------------------------- max-score ablation (single threshold)
+
+
+def valid_joint_frames(pred, tgt):
+    """[N,T,J] mask of joint-frames with a real prediction AND a real target (all-zero frames are padding)."""
+    valid = ~(np.all(pred == 0.0, axis=(2, 3)) | np.all(tgt == 0.0, axis=(2, 3)))     # [N,T]
+    return np.repeat(valid[:, :, None], pred.shape[2], axis=2)                        # [N,T,J]
+
+
+def max_scores_per_sample(pred, tgt, sigma):
+    """Per-sample max normalized error A_max(z_i) = max_{j,k} ||d_k^j|| / sqrt(lambda_max(C_k^j)).
+
+    Args:
+        pred, tgt: [N,T,J,3] in mm. sigma: [N,T,J] radial std sqrt(lambda_max(C)) in mm.
+    Returns:
+        (scores, has_valid): scores [n_valid_samples] (samples with no valid joint-frame dropped)
+        and the [N] mask of samples that contributed.
+    """
+    valid = valid_joint_frames(pred, tgt)
+    err = np.linalg.norm(pred - tgt, axis=-1)                                         # [N,T,J] mm
+    ratio = np.where(valid, err / np.maximum(sigma, 1e-12), -np.inf)
+    has_valid = valid.any(axis=(1, 2))                                                # [N]
+    return ratio.max(axis=(1, 2))[has_valid], has_valid
+
+
+def fit_max_threshold(pred, tgt, sigma, level):
+    """Single global threshold alpha_max = split-conformal quantile of A_max at ``level``.
+
+    With n calibration samples the finite-sample quantile needs k = ceil((n+1)*level) <= n; when
+    ``level`` is too deep for n, ``conformal_add_quantile`` returns inf and we fall back to the
+    largest observed score (the most conservative empirical choice) with a loud warning -- that
+    fallback does NOT carry the 1-eps guarantee.
+    """
+    scores, _ = max_scores_per_sample(pred, tgt, sigma)
+    alpha, n = conformal_add_quantile(scores, level)
+    if not np.isfinite(alpha):
+        n_needed = int(np.ceil(1.0 / (1.0 - level))) - 1
+        print(f"  WARNING: level {level} unreachable with n={n} calibration samples "
+              f"(need >= {n_needed}); falling back to the largest observed score. The 1-eps "
+              f"guarantee does NOT hold for this alpha_max.")
+        alpha = float(scores.max())
+    return float(alpha), scores
+
+
+def max_set_radius(alpha_max, sigma):
+    """Max-score ablation radius (mm): r = alpha_max * sqrt(lambda_max(C))."""
+    return alpha_max * sigma
+
+
+def gaussian_alpha(level):
+    """Uncalibrated (training-time) factor alpha = sqrt(chi2_3(level)); 4.5943 at level=0.9999.
+
+    The ``--method uncalibrated`` ablation: trust the predicted covariance and take the 3-dof
+    Mahalanobis ellipsoid at ``level``, collapsed to a sphere via lambda_max. No calibration data
+    enters, hence no conformal guarantee -- it is exactly what the model is trained to emit.
+    """
+    return float(np.sqrt(chi2.ppf(level, df=3)))
+
+
+def simultaneous_coverage(pred, tgt, radius):
+    """Fraction of samples whose ALL valid joint-timestep sets cover the target (family-wise coverage).
+
+    This is the quantity the max-score ablation calibrates directly; for the conditional calibrator
+    (which targets per-joint-frame marginal coverage) it is strictly lower and reported for contrast.
+    """
+    valid = valid_joint_frames(pred, tgt)
+    err = np.linalg.norm(pred - tgt, axis=-1)
+    miss = np.any(valid & (err > radius), axis=(1, 2))                                 # [N]
+    has_valid = valid.any(axis=(1, 2))
+    return float((~miss[has_valid]).mean())
+
+
 # --------------------------------------------------------------------------- data / eval helpers
 
 
@@ -222,6 +333,17 @@ def main():
                          "(self-calibrated) radius -- the right comparison for P2-trained models; "
                          "'affine' = the legacy affine-calibrated radius. Use 'raw' for cov_p2p4 "
                          "(affine would double-calibrate a model that already predicts the radius).")
+    ap.add_argument("--method", type=str, default="conditional",
+                    choices=["conditional", "max", "uncalibrated"],
+                    help="Which calibration the saved .npz deploys: 'conditional' = the Mondrian/CQR "
+                         "grid q_hat(joint, frame, input-unc bin) (default); 'max' = the single-"
+                         "threshold ablation r = alpha_max * sqrt(lambda_max(C)), where alpha_max is "
+                         "the conformal quantile of the per-sample max normalized error, so all J*T "
+                         "sets hold simultaneously at 1-eps; 'uncalibrated' = the no-calibration "
+                         "ablation that trusts the predicted covariance with the fixed training-time "
+                         "factor alpha = sqrt(chi2_3(level)) (4.5943 at 0.9999) and carries no "
+                         "conformal guarantee. All three are always fitted and reported; this only "
+                         "selects the deployed one (write it to its own --calibrator_path).")
     ap.add_argument("--output_dir", type=str, default="results/motion_prediction/conformal_calibration",
                     help="Directory for the diagnostic figure.")
     ap.add_argument("--calibrator_path", type=str,
@@ -260,7 +382,8 @@ def main():
             v_human=2.0,  # V_HUMAN_ISO from h36m_settings
             measurement_uncertainty=in_set,
         )  # [N, T, J] mm
-        return pred, tgt, in_set, r_conf_base, r_baseline, r_sara
+        sigma = covariance_sigma_max(cov)  # [N,T,J] mm -- normalizer of the max-score ablation
+        return pred, tgt, in_set, r_conf_base, r_baseline, r_sara, sigma
 
     # ----- assemble calibration / test splits --------------------------------------------------
     if args.calib_file and args.test_file:
@@ -269,16 +392,16 @@ def main():
         tst = prep(args.test_file)
     else:
         print(f"Splitting {args.results_file} by sample ({args.calib_frac:.0%} calib / rest test)")
-        pred, tgt, in_set, r_conf_base, r_affine, r_sara = prep(args.results_file)
+        pred, tgt, in_set, r_conf_base, r_affine, r_sara, sigma = prep(args.results_file)
         N = pred.shape[0]
         rng = np.random.default_rng(args.seed)
         perm = rng.permutation(N)
         n_cal = int(round(args.calib_frac * N))
         ci, ti = np.sort(perm[:n_cal]), np.sort(perm[n_cal:])
-        cal = tuple(a[ci] for a in (pred, tgt, in_set, r_conf_base, r_affine, r_sara))
-        tst = tuple(a[ti] for a in (pred, tgt, in_set, r_conf_base, r_affine, r_sara))
-    cpred, ctgt, cin, cbase, _, _ = cal
-    tpred, ttgt, tin, tbase, tbaseline, tsara = tst
+        cal = tuple(a[ci] for a in (pred, tgt, in_set, r_conf_base, r_affine, r_sara, sigma))
+        tst = tuple(a[ti] for a in (pred, tgt, in_set, r_conf_base, r_affine, r_sara, sigma))
+    cpred, ctgt, cin, cbase, _, _, csigma = cal
+    tpred, ttgt, tin, tbase, tbaseline, tsara, tsigma = tst
     J = cpred.shape[2]; T = cpred.shape[1]
     print(f"  calib samples={cpred.shape[0]}  test samples={tpred.shape[0]}  J={J} T={T}  "
           f"level={level}  base={args.base}")
@@ -293,28 +416,59 @@ def main():
     src_counts = {s: int((calib['source'] == s).sum()) for s in ("jtb", "jb", "b", "g")}
     print(f"  group source (finest->coarsest): {src_counts}")
 
+    # Max-score ablation: one global threshold from the per-sample max normalized error.
+    alpha_max, a_cal = fit_max_threshold(cpred, ctgt, csigma, level)
+    # Uncalibrated ablation: no fit at all, just the training-time Gaussian factor.
+    alpha_uncal = gaussian_alpha(level)
+    print(f"  fitted alpha_max = {alpha_max:.4f} (single threshold over all {J * T} joint-timesteps, "
+          f"n={a_cal.size} calib samples; A_max percentiles "
+          f"p50={np.percentile(a_cal, 50):.2f} p99={np.percentile(a_cal, 99):.2f} "
+          f"max={a_cal.max():.2f})")
+    print(f"  uncalibrated alpha = sqrt(chi2_3({level})) = {alpha_uncal:.4f} (no calibration data "
+          f"used; trusts the predicted covariance -- no conformal guarantee)")
+
     # ----- evaluate on test split: baseline (affine) vs conditional conformal vs SARA ------------------
     err_t, rm_t, in_t, j_t, t_t, valid_t = flatten_valid(tpred, ttgt, tbase, tin)
     _, rbase_t, _, _, _, _ = flatten_valid(tpred, ttgt, tbaseline, tin)
     _, rsara_t, _, _, _, _ = flatten_valid(tpred, ttgt, tsara, tin)
-    r_conf_t = apply_calibrator(calib, rm_t, in_t, j_t, t_t)
+    # Full-shape radii so the per-sample (simultaneous) coverage can be read off the same sets.
+    r_cond_full = apply_calibrator_grid(calib, tbase, tin)                 # [N,T,J] mm
+    r_max_full = max_set_radius(alpha_max, tsigma)                         # [N,T,J] mm
+    r_uncal_full = max_set_radius(alpha_uncal, tsigma)                     # [N,T,J] mm
+    r_conf_t = r_cond_full[valid_t]
+    r_max_t = r_max_full[valid_t]
+    r_uncal_t = r_uncal_full[valid_t]
 
     cov_base, vol_base = coverage_volume(err_t, rbase_t)
     cov_con, vol_con = coverage_volume(err_t, r_conf_t)
+    cov_max, vol_max = coverage_volume(err_t, r_max_t)
+    cov_unc, vol_unc = coverage_volume(err_t, r_uncal_t)
     cov_sara, vol_sara = coverage_volume(err_t, rsara_t)
+    # Family-wise (all J*T sets of a sample hold) coverage -- what the max-score score calibrates.
+    sim_base = simultaneous_coverage(tpred, ttgt, tbaseline)
+    sim_con = simultaneous_coverage(tpred, ttgt, r_cond_full)
+    sim_max = simultaneous_coverage(tpred, ttgt, r_max_full)
+    sim_unc = simultaneous_coverage(tpred, ttgt, r_uncal_full)
+    sim_sara = simultaneous_coverage(tpred, ttgt, tsara)
     print("\n==================== TEST-split coverage / volume ====================")
     print(f"target coverage (SET_LIKELIHOOD) = {level:.4f}")
+    print("  'coverage' = marginal, per joint-timestep;  'simult.' = all "
+          f"{J * T} joint-timestep sets of a sample hold at once")
     base_label = f"baseline ({args.baseline})"
-    print(f"{'method':>26} {'coverage':>10} {'mean vol (m^3)':>15} {'mean radius (m)':>16}")
-    print(f"{base_label:>26} {100 * cov_base:>9.3f}% {vol_base:>15.5f} {rbase_t.mean()/1000:>16.4f}")
-    print(f"{'conditional conformal':>26} {100 * cov_con:>9.3f}% {vol_con:>15.5f} {r_conf_t.mean()/1000:>16.4f}")
-    print(f"{'ISO 13855:2010~\\cite{{iso_2010_SafetyMachinery}}':>26} {100 * cov_sara:>9.3f}% {vol_sara:>15.5f} {rsara_t.mean()/1000:>16.4f}")
+    print(f"{'method':>26} {'coverage':>10} {'simult.':>10} {'mean vol (m^3)':>15} {'mean radius (m)':>16}")
+    print(f"{base_label:>26} {100 * cov_base:>9.3f}% {100 * sim_base:>9.3f}% {vol_base:>15.5f} {rbase_t.mean()/1000:>16.4f}")
+    print(f"{'conditional conformal':>26} {100 * cov_con:>9.3f}% {100 * sim_con:>9.3f}% {vol_con:>15.5f} {r_conf_t.mean()/1000:>16.4f}")
+    print(f"{'max-score (ablation)':>26} {100 * cov_max:>9.3f}% {100 * sim_max:>9.3f}% {vol_max:>15.5f} {r_max_t.mean()/1000:>16.4f}")
+    print(f"{'uncalibrated (ablation)':>26} {100 * cov_unc:>9.3f}% {100 * sim_unc:>9.3f}% {vol_unc:>15.5f} {r_uncal_t.mean()/1000:>16.4f}")
+    print(f"{'ISO 13855:2010~\\cite{{iso_2010_SafetyMachinery}}':>26} {100 * cov_sara:>9.3f}% {100 * sim_sara:>9.3f}% {vol_sara:>15.5f} {rsara_t.mean()/1000:>16.4f}")
+    print(f"  (the uncalibrated ablation is alpha={alpha_uncal:.4f} x sqrt(lambda_max(C)), i.e. the "
+          f"raw model radius -- identical to the baseline row when --baseline raw)")
 
     # coverage by input-uncertainty bin (the M1 test)
     edges = calib["bin_edges"]
     bt = np.clip(np.searchsorted(edges, in_t, side="right"), 0, B - 1)
-    print(f"\nCoverage by input-uncertainty bin ({args.baseline} -> conformal -> SARA):")
-    print(f"  {'bin (m)':>16} {'n':>10} {'base':>9} {'conformal':>10} {'SARA':>9} {'base vol':>9} {'con vol':>9} {'sara vol':>9}")
+    print(f"\nCoverage by input-uncertainty bin ({args.baseline} -> conformal -> max -> SARA):")
+    print(f"  {'bin (m)':>16} {'n':>10} {'base':>9} {'conformal':>10} {'max':>9} {'SARA':>9} {'base vol':>9} {'con vol':>9} {'max vol':>9} {'sara vol':>9}")
     lab_edges = np.concatenate([[0.0], edges, [np.inf]])
     for bb in range(B):
         m = bt == bb
@@ -322,37 +476,47 @@ def main():
             continue
         ca, _ = coverage_volume(err_t[m], rbase_t[m])
         cc, _ = coverage_volume(err_t[m], r_conf_t[m])
+        cm, _ = coverage_volume(err_t[m], r_max_t[m])
         cs, _ = coverage_volume(err_t[m], rsara_t[m])
         va = 4/3*np.pi*(rbase_t[m].mean()/1000)**3
         vc = 4/3*np.pi*(r_conf_t[m].mean()/1000)**3
+        vm = 4/3*np.pi*(r_max_t[m].mean()/1000)**3
         vs = 4/3*np.pi*(rsara_t[m].mean()/1000)**3
         lab = f"[{lab_edges[bb]:.2f},{lab_edges[bb+1]:.2f})" if np.isfinite(lab_edges[bb+1]) else f">={lab_edges[bb]:.2f}"
-        print(f"  {lab:>16} {int(m.sum()):>10,} {100*ca:>8.2f}% {100*cc:>9.2f}% {100*cs:>8.2f}% {va:>9.4f} {vc:>9.4f} {vs:>9.4f}")
+        print(f"  {lab:>16} {int(m.sum()):>10,} {100*ca:>8.2f}% {100*cc:>9.2f}% {100*cm:>8.2f}% {100*cs:>8.2f}% "
+              f"{va:>9.4f} {vc:>9.4f} {vm:>9.4f} {vs:>9.4f}")
 
     # per-joint coverage (the M2 test)
-    print(f"\nPer-joint coverage ({args.baseline} -> conformal -> SARA), sorted by baseline coverage:")
-    print(f"  {'joint':>10} {'base':>9} {'conformal':>10} {'SARA':>9} {'base vol':>9} {'con vol':>9} {'sara vol':>9}")
+    print(f"\nPer-joint coverage ({args.baseline} -> conformal -> max -> SARA), sorted by baseline coverage:")
+    print(f"  {'joint':>10} {'base':>9} {'conformal':>10} {'max':>9} {'SARA':>9} {'base vol':>9} {'con vol':>9} {'max vol':>9} {'sara vol':>9}")
     rows = []
     for j in range(J):
         m = j_t == j
         ca, va = coverage_volume(err_t[m], rbase_t[m])
         cc, vc = coverage_volume(err_t[m], r_conf_t[m])
+        cm, vm = coverage_volume(err_t[m], r_max_t[m])
         cs, vs = coverage_volume(err_t[m], rsara_t[m])
-        rows.append((j, ca, cc, cs, va, vc, vs))
-    for j, ca, cc, cs, va, vc, vs in sorted(rows, key=lambda r: r[1]):
-        print(f"  {JOINT_NAMES_13[j]:>10} {100*ca:>8.2f}% {100*cc:>9.2f}% {100*cs:>8.2f}% {va:>9.4f} {vc:>9.4f} {vs:>9.4f}")
-    print("=" * 90)
+        cu, _ = coverage_volume(err_t[m], r_uncal_t[m])
+        rows.append((j, ca, cc, cs, va, vc, vs, cm, vm, cu))
+    for j, ca, cc, cs, va, vc, vs, cm, vm, cu in sorted(rows, key=lambda r: r[1]):
+        print(f"  {JOINT_NAMES_13[j]:>10} {100*ca:>8.2f}% {100*cc:>9.2f}% {100*cm:>8.2f}% {100*cs:>8.2f}% "
+              f"{va:>9.4f} {vc:>9.4f} {vm:>9.4f} {vs:>9.4f}")
+    print("=" * 110)
 
     # ----- figure -----------------------------------------------------------------------------
     fig, ax = plt.subplots(1, 3, figsize=(19, 5.5))
     bins_x = range(B)
     ca_bin = [coverage_volume(err_t[bt == bb], rbase_t[bt == bb])[0] * 100 for bb in bins_x]
     cc_bin = [coverage_volume(err_t[bt == bb], r_conf_t[bt == bb])[0] * 100 for bb in bins_x]
+    cm_bin = [coverage_volume(err_t[bt == bb], r_max_t[bt == bb])[0] * 100 for bb in bins_x]
+    cu_bin = [coverage_volume(err_t[bt == bb], r_uncal_t[bt == bb])[0] * 100 for bb in bins_x]
     cs_bin = [coverage_volume(err_t[bt == bb], rsara_t[bt == bb])[0] * 100 for bb in bins_x]
     labels = [f"[{lab_edges[bb]:.2f},{lab_edges[bb+1]:.2f})" if np.isfinite(lab_edges[bb+1])
               else f">={lab_edges[bb]:.2f}" for bb in bins_x]
     ax[0].plot(bins_x, ca_bin, "o-", color="#e45756", label=args.baseline)
     ax[0].plot(bins_x, cc_bin, "s-", color="#4c78a8", label="conformal")
+    ax[0].plot(bins_x, cm_bin, "d--", color="#b279a2", label=r"max-score ($\alpha_{max}$)")
+    ax[0].plot(bins_x, cu_bin, "v:", color="#9c755f", label=r"uncalibrated ($\sqrt{\chi^2_3}$)")
     ax[0].plot(bins_x, cs_bin, "^-", color="#59a14f", label="SARA")
     ax[0].axhline(100 * level, color="k", ls="--", lw=1, label=f"target {100*level:.1f}%")
     ax[0].set_xticks(list(bins_x)); ax[0].set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
@@ -362,6 +526,8 @@ def main():
     jo = [r[0] for r in sorted(rows, key=lambda r: r[1])]
     ax[1].plot(range(J), [100 * rows[j][1] for j in jo], "o-", color="#e45756", label=args.baseline)
     ax[1].plot(range(J), [100 * rows[j][2] for j in jo], "s-", color="#4c78a8", label="conformal")
+    ax[1].plot(range(J), [100 * rows[j][7] for j in jo], "d--", color="#b279a2", label=r"max-score ($\alpha_{max}$)")
+    ax[1].plot(range(J), [100 * rows[j][9] for j in jo], "v:", color="#9c755f", label=r"uncalibrated ($\sqrt{\chi^2_3}$)")
     ax[1].plot(range(J), [100 * rows[j][3] for j in jo], "^-", color="#59a14f", label="SARA")
     ax[1].axhline(100 * level, color="k", ls="--", lw=1, label=f"target {100*level:.1f}%")
     ax[1].set_xticks(range(J)); ax[1].set_xticklabels([JOINT_NAMES_13[j] for j in jo], rotation=45, ha="right", fontsize=8)
@@ -374,7 +540,9 @@ def main():
     ax[2].set_title("Learned q_hat (m) vs input-unc bin\n(>0 inflate, <0 tighten)")
     ax[2].set_xlabel("input-unc bin"); ax[2].set_ylabel("q_hat (m), frame-mean")
     ax[2].legend(fontsize=6, ncol=2)
-    fig.suptitle(f"Conditional conformal calibration + SARA comparison  (target {100*level:.1f}%, base={args.base})", fontsize=13)
+    fig.suptitle(f"Conditional conformal calibration + max-score / uncalibrated ablations + SARA "
+                 f"comparison  (target {100*level:.1f}%, base={args.base}, alpha_max={alpha_max:.3f}, "
+                 f"alpha_uncal={alpha_uncal:.3f})", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig_path = os.path.join(out_dir, "conformal_calibration.png")
     fig.savefig(fig_path, dpi=130)
@@ -383,9 +551,18 @@ def main():
     # ----- persist the deployable calibrator ---------------------------------------------------
     cal_path = os.path.join(root_dir, args.calibrator_path)
     Path(cal_path).parent.mkdir(parents=True, exist_ok=True)
+    # All fits are stored in every file; ``mode`` selects which one consumers apply, so a single
+    # writer can emit the conditional deliverable and either ablation to separate paths. The
+    # 'uncalibrated' ablation reuses the alpha_max field (same apply rule alpha * sigma_max), with
+    # alpha set to the fixed Gaussian factor instead of the conformal quantile.
+    alpha_deployed = alpha_uncal if args.method == "uncalibrated" else alpha_max
     np.savez(cal_path, bin_edges=calib["bin_edges"], q_grid=calib["q_grid"], n_grid=calib["n_grid"],
-             level=level, J=J, T=T, B=B, base=args.base)
-    print(f"Saved calibrator to {cal_path}  (apply: r_cal = max(r_model + q_grid[j,t,bin(input_unc)], 0))")
+             level=level, J=J, T=T, B=B, base=args.base, mode=args.method, alpha_max=alpha_deployed)
+    apply_rule = {
+        "max": "r_cal = alpha_max * sqrt(lambda_max(cov))",
+        "uncalibrated": f"r_cal = sqrt(chi2_3({level})) * sqrt(lambda_max(cov))",
+    }.get(args.method, "r_cal = max(r_model + q_grid[j,t,bin(input_unc)], 0)")
+    print(f"Saved calibrator to {cal_path}  (mode={args.method}; apply: {apply_rule})")
 
 
 if __name__ == "__main__":

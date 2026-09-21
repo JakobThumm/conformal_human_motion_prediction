@@ -137,7 +137,22 @@ class Human36mMotionDataset3D(Dataset):
                 # Normal cov p99 is ~500k mm²; failed triangulations can reach 1e17 mm².
                 # These are not caught by valid_mask (which only checks human detection).
                 pose_valid = np.all(np.abs(pred_poses) <= 4000, axis=1)
-                cov_valid = np.all(np.abs(covariances) <= 1e5, axis=1)
+                # An ALL-ZERO covariance is the opposite failure mode from a huge one, and the
+                # `<= 1e5` bound above passes it: the export writes frames for which no 3D estimate
+                # was produced as the PREVIOUS frame's pose with a zero covariance, and still sets
+                # valid_mask = 1. The pose is frozen while the subject keeps moving, in runs up to
+                # 147 frames (5.9 s at 25 Hz) that drift up to 4.15 m from mocap -- and it stays
+                # inside the +/-4000 mm pose bound the whole time, so nothing else catches it.
+                # Zero covariance is an exact discriminator: on the frames this loader used to
+                # keep, {max|cov| == 0} is precisely {camera-vs-mocap root error > 1 m} (856/856 on
+                # S5, 43/43 on S11), and the smallest non-zero max|cov| is ~144 mm², so a strict
+                # `> 0` test has no borderline cases. Dropping them takes the worst camera-vs-mocap
+                # root error from 4.15 m down to 0.10 m (S5) / 0.22 m (S11).
+                # This matters most for the ISO 13855 / SARA baseline, whose reachable set is
+                # *centred on the last input pose*: before this screen, 48 of its 78 H36M-test
+                # prediction failures were this artifact, with ~3.7 m escapes.
+                cov_estimated = np.abs(covariances).max(axis=1) > 0.0
+                cov_valid = np.all(np.abs(covariances) <= 1e5, axis=1) & cov_estimated
                 valid_mask = valid_mask & pose_valid & cov_valid
 
                 # For DEBUG

@@ -11,9 +11,14 @@ set -e
 COVERAGE_DIR="${COVERAGE_DIR:-results/final/conformal_prediction_sets}"
 SHIELD_CSV="${SHIELD_CSV:-results/final/robot_shield/shield_results.csv}"
 OUTPUT="${OUTPUT:-results/final/all_conformal_results.tex}"
+# The five rows planned for the paper, in canonical row order. The two remaining
+# ablation cells (alpha_max / no-calib. with OOD *inputs*) are excluded even if their
+# coverage CSVs or shield rows exist; set METHODS=all to show everything.
+METHODS="${METHODS:-iso_no_ood ours_no_ood ours_uncal_ood ours_max_ood ours_ood}"
 
 python -m conformal_human_motion_prediction.generate_plots.generate_full_conformal_prediction_results_table \
   --coverage_dir "$COVERAGE_DIR" \
   --shield_csv "$SHIELD_CSV" \
   --output "$OUTPUT" \
-  --confidence 0.9999
+  --methods "$METHODS" \
+  --confidence 0.99999

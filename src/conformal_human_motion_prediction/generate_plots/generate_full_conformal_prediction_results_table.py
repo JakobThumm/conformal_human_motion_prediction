@@ -17,12 +17,11 @@ Usage::
         --output results/final/all_conformal_results.tex
 """
 import argparse
-import math
 import os
 
 from conformal_human_motion_prediction.generate_plots.conformal_results_common import (
-    METHODS, METHOD_LABELS, bold, fmt_num, fmt_pl, miss_rate, nines_of_reliability,
-    read_coverage_by_method, read_shield_by_method, sci_cell,
+    METHODS, prune_to_methods, select_methods, METHOD_LABELS, best_coverage_method, bold,
+    coverage_cells, fmt_num, read_coverage_by_method, read_shield_by_method, sci_cell,
 )
 
 # Above this many verified-but-contact cases the count is shown in scientific notation.
@@ -34,7 +33,7 @@ def generate_table(cov, shield, confidence):
     cov_present = [m for m in METHODS if m in cov]
     sh_present = [m for m in METHODS if m in shield]
     # Miss-rate (lower better) and nines of reliability (higher better) both rank by coverage.
-    best_cov = max(cov_present, key=lambda m: cov[m]["coverage_percent"]) if cov_present else None
+    best_cov = best_coverage_method(cov, cov_present)
     best_p = {q: (min(cov_present, key=lambda m: cov[m][f"volume_{q}_m3"]) if cov_present else None)
               for q in ("p5", "p50", "p95")}
     best_safe = max(sh_present, key=lambda m: shield[m]["pct_verified"]) if sh_present else None
@@ -51,24 +50,24 @@ def generate_table(cov, shield, confidence):
         r"\begin{table*}[t]",
         r"    \centering",
         r"    \caption{Motion prediction evaluation and certification simulation on H36M test data. "
-        r"The first columns report the miss-rate (rate of prediction outside of the predicted set), "
-        r"the nines of reliability and volume (\num{5}/\num{50}/\num{95} percentiles of the "
-        r"per-sphere volume) of the predicted sets. The last four columns report the results on "
-        r"$N = \num{" + fmt_num(n, 0) + r"}$ simulated HRC test cycles, measuring how often SARA "
-        r"shield verified the monitored trajectory as safe ($c_{\text{safe}}$), the number of "
-        r"contacts despite a verified trajectory ($c_{\text{safe}} \land \text{contact}$), and the "
-        r"resulting PL.}",
+        r"The first columns report the per joint-timestep miss-rate (rate of a ground-truth "
+        r"position landing outside the predicted set), the nines of reliability, and the volume "
+        r"(\num{5}/\num{50}/\num{95} percentiles of the per-sphere volume) of the predicted sets. "
+        r"The last three columns report the results on $N = \num{" + fmt_num(n, 0) + r"}$ simulated "
+        r"HRC test cycles, measuring how often SARA shield verified the monitored trajectory as "
+        r"safe ($c_{\text{safe}}$) and the number of contacts despite a verified trajectory "
+        r"($c_{\text{safe}} \land \text{contact}$), and the resulting dangerous-failure rate.}",
         r"    \label{tab:all_conformal_results}",
-        r"    \begin{tabular}{lccccc|cccc}",
+        r"    \begin{tabular}{lcccccccc}",
         r"        \toprule",
         r"        \multirow{2}[3]{*}{\textbf{Method}} & \multicolumn{2}{c}{Coverage} & "
-        r"\multicolumn{3}{c|}{$\downarrow$ Volume ($m^3$)} & "
+        r"\multicolumn{3}{c}{$\downarrow$ Volume (\unit{\cubic\meter})} & "
         r"\multirow{2}[3]{*}{$\uparrow$ $c_{\text{safe}}$ (\%)} & "
         r"\multirow{2}[3]{*}{$\downarrow$ $c_{\text{safe}} \land \text{contact}$} & "
-        r"\multirow{2}[3]{*}{$\downarrow$ PFH$_\text{D}$ (1/h)} & \multirow{2}[3]{*}{PL} \\",
+        r"\multirow{2}[3]{*}{$\downarrow$ PFH$_\text{D}$ (1/h)} \\",
         r"        \cmidrule(lr){2-3} \cmidrule(lr){4-6}",
         r"         & $\downarrow$ Miss-rate & $\uparrow$ 9s of reliability & 5\% & 50\% & 95\% "
-        r"& & & & \\",
+        r"& & & \\",
         r"        \midrule",
     ]
     for m in METHODS:
@@ -77,9 +76,7 @@ def generate_table(cov, shield, confidence):
         # coverage cells: miss-rate + nines of reliability
         if m in cov:
             c = cov[m]
-            miss_s = sci_cell(miss_rate(c["coverage_percent"]), m == best_cov, digits=1)
-            k = nines_of_reliability(c["coverage_percent"])
-            nines_s = bold(r"$\infty$" if math.isinf(k) else f"{k:.2f}", m == best_cov)
+            miss_s, nines_s = coverage_cells(c["coverage_percent"], m == best_cov)
             v5 = bold(f"{c['volume_p5_m3']:.3f}", m == best_p["p5"])
             v50 = bold(f"{c['volume_p50_m3']:.3f}", m == best_p["p50"])
             v95 = bold(f"{c['volume_p95_m3']:.3f}", m == best_p["p95"])
@@ -91,12 +88,11 @@ def generate_table(cov, shield, confidence):
             safe_s = bold(f"{s['pct_verified']:.2f}", m == best_safe)
             contact_s = contact_cell(s["n_verified_contact"], m == best_contact)
             pfh_s = sci_cell(s["pfh_d"], m == best_pfh, digits=2)
-            pl_s = bold(fmt_pl(s["pl"]), m == best_pfh)
         else:
-            safe_s = contact_s = pfh_s = pl_s = "X"
+            safe_s = contact_s = pfh_s = "X"
         lines.append(
-            f"        {METHOD_LABELS[m]} & {miss_s} & {nines_s} & {v5} & {v50} & {v95} & "
-            f"{safe_s} & {contact_s} & {pfh_s} & {pl_s} \\\\"
+            f"        {METHOD_LABELS[m]} & {miss_s} & {nines_s} & "
+            f"{v5} & {v50} & {v95} & {safe_s} & {contact_s} & {pfh_s} \\\\"
         )
     lines += [r"        \bottomrule", r"    \end{tabular}", r"\end{table*}", ""]
     return "\n".join(lines)
@@ -108,14 +104,18 @@ def main():
                    help="Directory with the three per-method coverage CSVs.")
     p.add_argument("--shield_csv", default="results/final/robot_shield/shield_results.csv",
                    help="Shield results CSV written by simulate_robot_shield --results_csv.")
+    p.add_argument("--methods", default="all",
+                   help="Method rows to include: 'all' (default) or a comma/space separated "
+                        "list of method keys (see METHODS in conformal_results_common).")
     p.add_argument("--output", default="results/final/all_conformal_results.tex",
                    help="Output .tex path for the combined table.")
     p.add_argument("--confidence", type=float, default=0.9999,
                    help="Which Clopper-Pearson confidence column to report (must be in the CSV).")
     args = p.parse_args()
 
-    cov = read_coverage_by_method(args.coverage_dir)
-    shield = read_shield_by_method(args.shield_csv, args.confidence)
+    methods = select_methods(args.methods)
+    cov = prune_to_methods(read_coverage_by_method(args.coverage_dir), methods)
+    shield = prune_to_methods(read_shield_by_method(args.shield_csv, args.confidence), methods)
     if not cov and not shield:
         raise SystemExit("No coverage or shield data found — run the two upstream scripts first.")
     table = generate_table(cov, shield, args.confidence)

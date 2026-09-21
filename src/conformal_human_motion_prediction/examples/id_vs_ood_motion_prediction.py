@@ -23,13 +23,20 @@ import torch
 import cloudpickle
 import jax.numpy as jnp
 import jax
-from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 
 from conformal_human_motion_prediction.datasets.h36m_motion_prediction import Human36mMotionDataset3D
 from conformal_human_motion_prediction.pose_estimation.inference_helper import initialize_jax_models
 from conformal_human_motion_prediction.utils.visualization import visualize_motion_prediction
 from conformal_human_motion_prediction.pose_estimation.h36m_settings import CONNECTIONS_13
-from conformal_human_motion_prediction.motion_prediction.h36m_settings import REDUCED_JOINT_INDICES, PREDICTION_HORIZON_LENGTH, REDUCED_TIMESTEP
+from conformal_human_motion_prediction.motion_prediction.h36m_settings import (
+    REDUCED_JOINT_INDICES, PREDICTION_HORIZON_LENGTH, REDUCED_TIMESTEP,
+    OOD_THRESHOLD as MOTION_OOD_THRESHOLD,
+)
+from conformal_human_motion_prediction.utils.eval_utils import (
+    compute_ood_detection_metrics,
+    print_ood_detection_metrics,
+    save_ood_detection_metrics,
+)
 
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 
@@ -232,39 +239,6 @@ def create_comparison_visualization(id_results, ood_results, save_path="id_vs_oo
     return fig
 
 
-def compute_ood_detection_metrics(id_scores, ood_scores):
-    """
-    Compute OOD detection metrics (AUROC, AUPRC).
-
-    Args:
-        id_scores: OOD scores for ID samples
-        ood_scores: OOD scores for OOD samples
-
-    Returns:
-        dict: Dictionary with AUROC and AUPRC metrics
-    """
-    # Create labels: 0 for ID, 1 for OOD
-    labels = np.concatenate([
-        np.zeros(len(id_scores)),
-        np.ones(len(ood_scores))
-    ])
-
-    # Combine scores
-    scores = np.concatenate([id_scores, ood_scores])
-
-    # Compute AUROC
-    auroc = roc_auc_score(labels, scores)
-
-    # Compute AUPRC
-    precision, recall, _ = precision_recall_curve(labels, scores)
-    auprc = auc(recall, precision)
-
-    return {
-        'auroc': auroc,
-        'auprc': auprc
-    }
-
-
 def visualize_sample_predictions(id_results, ood_results,
                                  output_dir="results/motion_prediction/ID_vs_OOD/sample_predictions"):
     """
@@ -328,6 +302,52 @@ def visualize_sample_predictions(id_results, ood_results,
     print("Sample visualizations saved to {}".format(output_dir))
 
 
+def recompute_metrics_from_scores(args):
+    """Rewrite the detection-metrics JSON from a saved ``*_ood_scores.cloudpickle``.
+
+    The OOD scores of a finished run are saved verbatim, so AUROC/AUPRC and the rates at
+    ``--ood_threshold`` can be re-derived exactly without re-running the model. Fields of an
+    existing results JSON that this path does not measure (the MPJPE columns) are preserved.
+    """
+    with open(args.load_scores, 'rb') as f:
+        data = cloudpickle.load(f)
+
+    reserved = {'ID', 'score_fun', 'args_dict', 'eigenvals'}
+    ood_keys = [k for k in data if k not in reserved and '_QF' not in k]
+    if 'ID' not in data or len(ood_keys) != 1:
+        raise SystemExit(f"{args.load_scores}: expected one 'ID' and one OOD score array, "
+                         f"found ID={'ID' in data} OOD keys={ood_keys}")
+    id_scores = np.asarray(data['ID']).ravel()
+    ood_scores = np.asarray(data[ood_keys[0]]).ravel()
+
+    metrics = compute_ood_detection_metrics(id_scores, ood_scores, threshold=args.ood_threshold)
+    print_ood_detection_metrics(metrics, label="motion (H36M vs time-shuffled H36M)")
+
+    score_fn_name = os.path.basename(args.load_scores).replace('_ood_scores.cloudpickle', '')
+    results_file = os.path.join(args.output_dir, f"{score_fn_name}_results.json")
+    payload = {}
+    if os.path.exists(results_file):
+        with open(results_file) as f:
+            payload = json.load(f)
+    saved_args = data.get('args_dict', {})
+    payload.update({
+        'score_function': saved_args.get('score_function', payload.get('score_function')),
+        'score_fn_name': score_fn_name,
+        'max_samples': saved_args.get('max_samples', payload.get('max_samples')),
+        'id_dataset': 'H36M validation (S11)',
+        'ood_dataset': 'H36M validation, time-permuted inputs',
+        'id_ood_score_mean': float(np.mean(id_scores)),
+        'id_ood_score_std': float(np.std(id_scores)),
+        'ood_ood_score_mean': float(np.mean(ood_scores)),
+        'ood_ood_score_std': float(np.std(ood_scores)),
+        **metrics,
+    })
+    os.makedirs(args.output_dir, exist_ok=True)
+    with open(results_file, 'w') as f:
+        json.dump(payload, f, indent=2)
+    print(f"\n✓ Results saved to: {results_file}")
+
+
 def main():
     """Main function for ID vs OOD motion prediction comparison."""
     # Parse command line arguments
@@ -342,7 +362,21 @@ def main():
                         help='Seed for the ID/OOD subsampling and the OOD time-shuffle. Pass the same '
                              'seed when comparing two score functions so both see identical samples '
                              '(default: 0)')
+    parser.add_argument('--ood_threshold', type=float, default=MOTION_OOD_THRESHOLD,
+                        help='Decision threshold for the TPR/FPR/TNR/FNR columns (score > threshold '
+                             '=> flagged OOD). Head-specific; the default is the deployed '
+                             f'OOD_THRESHOLD ({MOTION_OOD_THRESHOLD:g}) of motion_prediction/'
+                             'h36m_settings.py, which is calibrated for the random-projection head '
+                             'only. Re-tune it before quoting rates for another head.')
+    parser.add_argument('--load_scores', type=str, default=None,
+                        help='Recompute the detection metrics from a previously saved '
+                             '"*_ood_scores.cloudpickle" instead of re-running inference. Only the '
+                             'metrics JSON is rewritten (no plots, no MPJPE).')
     args = parser.parse_args()
+
+    if args.load_scores:
+        recompute_metrics_from_scores(args)
+        return
 
     # Both the subsample below and the per-item OOD time-shuffle in Human36mMotionDataset3D draw
     # from the global numpy RNG, so seeding it here pins the evaluation set for a paired comparison.
@@ -447,10 +481,10 @@ def main():
         print("=" * 80)
         detection_metrics = compute_ood_detection_metrics(
             id_results['ood_scores'],
-            ood_results['ood_scores']
+            ood_results['ood_scores'],
+            threshold=args.ood_threshold,
         )
-        print(f"AUROC: {detection_metrics['auroc']:.4f}")
-        print(f"AUPRC: {detection_metrics['auprc']:.4f}")
+        print_ood_detection_metrics(detection_metrics, label="motion (H36M vs time-shuffled H36M)")
 
         # Save results to JSON file
         os.makedirs(args.output_dir, exist_ok=True)
@@ -464,8 +498,9 @@ def main():
             'score_fn_name': score_fn_name,
             'max_samples': max_samples,
             'seed': args.seed,
-            'auroc': float(detection_metrics['auroc']),
-            'auprc': float(detection_metrics['auprc']),
+            'id_dataset': 'H36M validation (S11)',
+            'ood_dataset': 'H36M validation, time-permuted inputs',
+            **detection_metrics,
             'id_mpjpe_mean': float(id_results['mpjpe_overall']),
             'id_mpjpe_std': float(id_results['mpjpe_std']),
             'id_ood_score_mean': float(np.mean(id_results['ood_scores'])),
