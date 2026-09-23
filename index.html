@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="description"
-        content="Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees: a certifiable framework for safe HRC from vision inputs with end-to-end uncertainty propagation, conformal prediction sets, and out-of-distribution handling.">
-  <meta name="keywords" content="Safe Human-Robot Collaboration, Conformal Prediction, Human Motion Prediction, Pose Estimation, Uncertainty Quantification, ISO 13849, SARA shield">
+        content="Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees: 3D human motion prediction with conformal prediction sets, gradient-based out-of-distribution handling, and a bounded probability of dangerous failure per hour for certifiable safe HRC.">
+  <meta name="keywords" content="Safe Human-Robot Collaboration, Conformal Prediction, Human Motion Prediction, Pose Estimation, Uncertainty Quantification, Out-of-distribution Detection, ISO 13849-1, SARA shield">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <meta property="og:title" content="Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees"/>
-  <meta property="og:description" content="A certifiable framework for safe HRC from vision inputs: end-to-end uncertainty propagation, conformal prediction sets, and OOD handling — reaching ISO 13849-1 performance level d."/>
+  <meta property="og:description" content="Conformal prediction sets for 3D human motion, gradient-based OOD handling, and a bounded probability of dangerous failure per hour — safe HRC from camera input alone."/>
   <meta property="og:type" content="website"/>
+  <meta property="og:image" content="./static/images/film_poster.jpg"/>
   <meta name="twitter:card" content="summary_large_image"/>
 
   <title>Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees</title>
@@ -77,7 +78,7 @@
               </span>
               <!-- Video -->
               <span class="link-block">
-                <a href="https://youtu.be/oeN8RgwpzhE" target="_blank"
+                <a href="https://www.youtube.com/watch?v=qN9ZHieRR7w" target="_blank"
                    class="external-link button is-normal is-rounded is-dark">
                   <span class="icon"><i class="fab fa-youtube"></i></span>
                   <span>Video</span>
@@ -99,25 +100,23 @@
   </div>
 </section>
 
-<!-- ===================== TEASER VIDEO ===================== -->
-<section class="hero teaser">
+<!-- ===================== FILM ===================== -->
+<section class="hero teaser" id="film">
   <div class="container is-max-desktop">
     <div class="hero-body">
       <div class="publication-video">
-        <iframe src="https://www.youtube.com/embed/oeN8RgwpzhE?rel=0"
-                frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+        <iframe src="https://www.youtube.com/embed/qN9ZHieRR7w?rel=0"
+                title="Vision-Based Safe Human-Robot Collaboration with Uncertainty Guarantees"
+                frameborder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowfullscreen></iframe>
       </div>
-      <h2 class="subtitle has-text-centered">
-        Our certifiable pipeline running on a real Franka Emika robot: it estimates the 3D human pose and
-        its uncertainty from stereo vision, predicts future motion with <b>conformal prediction sets</b>,
-        and stops the robot before a collision can occur — even for out-of-distribution inputs.
-      </h2>
     </div>
   </div>
 </section>
 
 <!-- ===================== ABSTRACT ===================== -->
+<!-- Reproduces content/A0_abstract.tex verbatim. -->
 <section class="section">
   <div class="container is-max-desktop">
     <div class="columns is-centered has-text-centered">
@@ -126,22 +125,25 @@
         <div class="content has-text-justified">
           <p>
             Safe human-robot collaboration (HRC) requires accurate human pose estimation and motion
-            prediction to prevent critical collisions. Existing certifiable safe HRC approaches are highly
-            conservative or rely on marker-based motion tracking, while vision-based pose estimators lack
-            the statistical guarantees required for certification in accordance with ISO&nbsp;13849-1.
+            prediction to prevent critical collisions. Existing certifiable safe HRC approaches are
+            highly conservative or rely on marker-based motion tracking, while vision-based pose
+            estimators lack the statistical guarantees required for certification in accordance with
+            ISO&nbsp;13849-1.
           </p>
           <p>
-            Hence, we propose a pipeline that predicts 3D human motion with <b>end-to-end propagation of the
-            pose estimation uncertainty</b> and over-approximates the prediction error with
-            <b>conformal prediction sets</b>. A gradient-based monitor detects out-of-distribution inputs and
-            replaces them with past predictions to maintain smooth operation. The resulting conformal
-            prediction sets directly integrate into the provably safe HRC approach SARA&nbsp;shield.
+            Hence, we propose a pipeline that predicts 3D human motion and <b>strong probabilistic
+            bounds on the prediction error using conformal prediction</b>. A gradient-based monitor
+            detects out-of-distribution input poses and replaces them with poses from past predicted
+            motions to maintain smooth operation. The resulting conformal prediction sets directly
+            integrate into the provably safe HRC approach SARA&nbsp;shield.
           </p>
           <p>
-            In experiments on the Human3.6M dataset and a real-world HRC setting, our conformal prediction
-            sets reduce the conservatism of model-based predictions by a factor of <b>8</b>, and our framework
-            achieves a probability of a dangerous failure per hour below <b>10<sup>&minus;6</sup></b> with
-            <b>99.99&nbsp;%</b> confidence — sufficient for certification with performance level&nbsp;d.
+            In experiments on the Human3.6M dataset and a real-world HRC setting, our conformal
+            prediction sets have a <b>7.6&nbsp;times smaller volume</b> than model-based predictions,
+            and we bound the probability of a dangerous failure per hour by
+            <b class="nb">9.5&nbsp;&times;&nbsp;10<sup>&minus;7</sup></b> with <b>99.999&nbsp;%</b>
+            confidence under our test distribution, which is <b>necessary but not sufficient</b> for
+            performance level&nbsp;d.
           </p>
         </div>
       </div>
@@ -155,26 +157,52 @@
     <div class="columns is-centered">
       <div class="column is-3 has-text-centered">
         <div class="stat-card">
-          <p class="stat-number">8&times;</p>
-          <p class="stat-label">smaller prediction volume than the ISO&nbsp;13855 velocity model</p>
+          <p class="stat-number">7.6&times;</p>
+          <p class="stat-label">smaller median prediction-set volume than the ISO&nbsp;13855 constant-velocity model, at the same 99.99&nbsp;% calibrated confidence</p>
         </div>
       </div>
       <div class="column is-3 has-text-centered">
         <div class="stat-card">
-          <p class="stat-number">4.1&times;10<sup>&minus;7</sup></p>
-          <p class="stat-label">dangerous failures per hour (PFH<sub>D</sub>) at 99.99&nbsp;% confidence</p>
+          <p class="stat-number nb">9.5&times;10<sup>&minus;7</sup></p>
+          <p class="stat-label">bound on PFH<sub>D</sub> (1/h) at 99.999&nbsp;% confidence — inside the PL&nbsp;d band, <i>necessary but not sufficient</i> for PL&nbsp;d</p>
         </div>
       </div>
       <div class="column is-3 has-text-centered">
         <div class="stat-card">
-          <p class="stat-number">PL&nbsp;d</p>
-          <p class="stat-label">certifiable performance level under ISO&nbsp;13849-1</p>
+          <p class="stat-number">66&nbsp;ms</p>
+          <p class="stat-label">end-to-end pipeline latency on one RTX&nbsp;5090, with 24&nbsp;% fewer interrupted predictions from OOD handling</p>
         </div>
       </div>
-      <div class="column is-3 has-text-centered">
-        <div class="stat-card">
-          <p class="stat-number">&minus;23.8&nbsp;%</p>
-          <p class="stat-label">fewer interruptions in real-world operation via OOD handling</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== THE REQUIREMENT ===================== -->
+<section class="section section-tinted">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">What has to be guaranteed</h2>
+    <div class="columns is-vcentered">
+      <div class="column is-half">
+        <figure class="scene-figure">
+          <video class="scene" data-src="./static/videos/clip_failure.mp4"
+                 loop muted playsinline preload="none"></video>
+        </figure>
+      </div>
+      <div class="column is-half">
+        <div class="content">
+          <p>
+            A <b>prediction failure</b> happens when a true joint position leaves the set we predicted
+            for it. That alone is not dangerous — it becomes a <b>dangerous failure</b> only if the
+            robot then actually touches the human.
+          </p>
+          <p>
+            ISO&nbsp;13849-1:2023 rates a safety function by its average <b>probability of a dangerous
+            failure per hour</b> (PFH<sub>D</sub>). Collaborative applications commonly target
+            <b>PL&nbsp;d</b>, i.e.
+            10<sup>&minus;7</sup>&nbsp;&le;&nbsp;PFH<sub>D</sub>&nbsp;&lt;&nbsp;10<sup>&minus;6</sup>
+            — at most one dangerous failure in roughly <b>114&nbsp;years</b> of 24/7
+            operation. No vision-based baseline achieves this level of reliability yet.
+          </p>
         </div>
       </div>
     </div>
@@ -193,175 +221,412 @@
                alt="Methodological overview of the safe HRC framework"
                style="max-width: 100%; border-radius: 6px;">
           <p class="caption">
-            <b>Methodological overview.</b> Our novel contributions are highlighted in blue. From the past
-            2&nbsp;s of stereo images we estimate an uncertainty-aware 3D pose, predict future poses with
-            heteroscedastic covariances, and convert them into conformal prediction sets. Pose and motion
-            monitors detect out-of-distribution inputs. The conformal sets bound the human reachable occupancy,
-            which SARA&nbsp;shield uses to certify the safety of the robot trajectory.
+            <b>Overview of our safe HRC framework</b>, with our contributions in blue. We estimate the
+            human pose in the left and right camera image with YOLO26 and compute the 3D pose and its
+            covariances by triangulation. From the past <i>K<sub>I</sub></i>&nbsp;poses we predict the
+            next <i>K<sub>P</sub></i>&nbsp;3D poses and covariances. If the pose or motion monitor
+            flags an input as out-of-distribution, we substitute the corresponding pose from the last
+            motion prediction. Conformal prediction bounds then give the reachable occupancy of the
+            human over [<i>t</i><sub>0</sub>,&nbsp;<i>t<sub>M</sub></i>], from the current control step
+            until the robot could be stopped, which SARA&nbsp;shield uses to verify the robot
+            trajectory.
           </p>
         </div>
 
-        <div class="columns is-centered">
-          <div class="column">
+        <!-- Step 1 -->
+        <div class="columns is-vcentered step-row">
+          <div class="column is-half">
             <div class="content">
               <h3 class="title is-5"><span class="step-num">1</span> Uncertainty-aware 3D pose</h3>
               <p>
-                A YOLO26 pose network returns per-keypoint 2D means <i>and</i> covariances in both camera
-                frames. Uncertainty-aware triangulation lifts them to a 3D pose with full covariance matrices,
-                giving a calibrated estimate of where each human joint is.
+                We adapt <b>YOLO26</b> so that it returns a 2D mean <i>and</i> a 2&times;2 covariance matrix for every joint in both camera frames. Linear triangulation
+                lifts the two 2D poses to a 3D pose with 3&times;3 covariance matrices.
               </p>
             </div>
           </div>
-          <div class="column">
+          <div class="column is-half">
+            <figure class="scene-figure">
+              <video class="scene" data-src="./static/videos/clip_perception.mp4"
+                     loop muted playsinline preload="none"></video>
+            </figure>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="columns is-vcentered step-row is-flex-direction-row-reverse-desktop">
+          <div class="column is-half">
             <div class="content">
               <h3 class="title is-5"><span class="step-num">2</span> Uncertainty-aware motion prediction</h3>
               <p>
-                A DCT-based pose transformer predicts the next 3D poses together with heteroscedastic
-                aleatoric covariances. The input pose uncertainty is embedded and propagated end-to-end, so the
-                predicted covariances reflect both estimation and prediction error.
+                A DCT-based pose transformer takes <i>K<sub>I</sub></i>&nbsp;=&nbsp;50 observed poses
+                (2&nbsp;s at 25&nbsp;Hz) <i>with</i> their covariances and predicts the next
+                <i>K<sub>P</sub></i>&nbsp;=&nbsp;10 poses (400&nbsp;ms) together with heteroscedastic
+                covariances. Because the input uncertainty is embedded and propagated end-to-end, the
+                predicted covariance grows with the horizon and the input uncertainty.
               </p>
             </div>
           </div>
+          <div class="column is-half">
+            <figure class="scene-figure">
+              <video class="scene" data-src="./static/videos/clip_motion.mp4"
+                     loop muted playsinline preload="none"></video>
+            </figure>
+          </div>
         </div>
 
-        <div class="columns is-centered">
-          <div class="column">
+        <!-- Step 3 -->
+        <div class="columns is-vcentered step-row">
+          <div class="column is-half">
             <div class="content">
               <h3 class="title is-5"><span class="step-num">3</span> Conformal prediction sets</h3>
               <p>
-                Using split conformal prediction, we calibrate spherical prediction sets that contain the true
-                future joint positions with <b>1&nbsp;&minus;&nbsp;&epsilon;</b> confidence. Spheres and capsules
-                enable fast intersection checks while retaining a finite-sample coverage guarantee.
+                A predicted covariance is not a guarantee. On a held-out calibration split we score
+                every (joint, horizon-step) pair by how far the prediction deviated from the ground-truth in
+                units of the predicted standard deviation,
+                <i>A<sub>k</sub><sup>j</sup></i>&nbsp;=&nbsp;&#8214;<b>d</b>&#8214;<sub>2</sub>&nbsp;/&nbsp;&radic;<span class="rad">&lambda;<sub>max</sub>(<b>C</b>)</span>,
+                and take the empirical (1&nbsp;&minus;&nbsp;&epsilon;)-quantile
+                <i>&alpha;<sub>k</sub><sup>j</sup></i>. The resulting <b>sphere</b>
+                <i>S<sub>k</sub><sup>j</sup></i>&nbsp;=&nbsp;<i>B</i>(<b>p&#770;</b>,
+                <i>&alpha;<sub>k</sub><sup>j</sup></i>&thinsp;&radic;<span class="rad">&lambda;<sub>max</sub></span>)
+                contains the true joint with probability at least 1&nbsp;&minus;&nbsp;&epsilon;=<b>99.99&nbsp;%</b>. 
               </p>
             </div>
           </div>
-          <div class="column">
-            <div class="content">
-              <h3 class="title is-5"><span class="step-num">4</span> Out-of-distribution handling</h3>
-              <p>
-                A sketched-Lanczos uncertainty monitor flags inputs that fall outside the training distribution.
-                Rather than emitting an unreliable prediction, the pipeline reuses past motion predictions,
-                degrading gracefully and resuming once valid observations return.
-              </p>
-            </div>
+          <div class="column is-half">
+            <figure class="scene-figure">
+              <video class="scene" data-src="./static/videos/clip_conformal.mp4"
+                     loop muted playsinline preload="none"></video>
+            </figure>
           </div>
         </div>
 
-        <div class="columns is-centered">
-          <div class="column is-two-thirds">
+        <!-- Step 4 -->
+        <div class="columns is-vcentered step-row is-flex-direction-row-reverse-desktop">
+          <div class="column is-half">
             <div class="content">
-              <h3 class="title is-5"><span class="step-num">5</span> Certifiable safety via SARA shield</h3>
+              <h3 class="title is-5"><span class="step-num">4</span> Out-of-distribution handling</h3>
               <p>
-                The conformal prediction sets bound the human reachable occupancy over the robot's braking
-                horizon. SARA&nbsp;shield verifies each monitored trajectory against this occupancy and executes
-                it only if a collision can be excluded — providing certifiable safety at all times.
+                The coverage guarantee needs the test input to be exchangeable with the calibration
+                data, which breaks in unseen situations. Hence, we employ two out-of-distribution (OOD) monitors based on sketched-Lanczos uncertainty scores; one for the
+                pose network and one for the motion network. These monitors score how far an input is from the training
+                distribution. Instead of using an unreliable prediction, the pipeline falls back on
+                the corresponding pose from the <i>previous</i> prediction and resumes normal operation
+                once <i>N</i><sub>req</sub> consecutive valid observations are present.
               </p>
             </div>
           </div>
+          <div class="column is-half">
+            <figure class="scene-figure">
+              <video class="scene" data-src="./static/videos/clip_ood.mp4"
+                     loop muted playsinline preload="none"></video>
+            </figure>
+          </div>
         </div>
+
+        <!-- Step 5 -->
+        <div class="columns is-vcentered step-row">
+          <div class="column is-half">
+            <div class="content">
+              <h3 class="title is-5"><span class="step-num">5</span> Verification with SARA shield</h3>
+              <p>
+                We merge adjacent joint spheres into <b>capsules</b> that cover the body radius and account for any time between two predicted steps. These capsules are the human
+                reachable occupancy over the robot's braking horizon. SARA&nbsp;shield checks for intersection between the reachable occupancies of the human and the robot.
+                If there is no intersection, we execute the trajectory, otherwise a failsafe stop.
+              </p>
+            </div>
+          </div>
+          <div class="column is-half">
+            <figure class="scene-figure">
+              <video class="scene" data-src="./static/videos/clip_shield.mp4"
+                     loop muted playsinline preload="none"></video>
+            </figure>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
 </section>
 
 <!-- ===================== RESULTS ===================== -->
-<section class="section" style="background-color: #f5f9fd;">
+<section class="section section-tinted">
   <div class="container is-max-desktop">
     <h2 class="title is-3 has-text-centered">Results</h2>
 
-    <div class="columns is-centered">
-      <div class="column is-full-width">
+    <div class="content">
+      <p class="has-text-centered">
+        We evaluate on <b>Human3.6M</b> (train on S1/S6/S7/S8/S9, test on S5, S11 split into validation
+        and calibration) in a dual-camera setup, and in a real-world Franka&nbsp;Emika cell with an
+        Intel&nbsp;RealSense&nbsp;435i RGB-D camera. Unless stated otherwise:
+        <i>K<sub>I</sub></i>&nbsp;=&nbsp;50, <i>K<sub>P</sub></i>&nbsp;=&nbsp;10,
+        <i>J</i>&nbsp;=&nbsp;13 joints, 25&nbsp;fps,
+        <i>&epsilon;</i><sub>OOD</sub>&nbsp;&asymp;&nbsp;10&nbsp;%, and a calibration confidence of
+        1&nbsp;&minus;&nbsp;<i>&epsilon;</i>&nbsp;=&nbsp;99.99&nbsp;%. We test three hypotheses.
+      </p>
+    </div>
+
+    <div class="columns is-centered hypothesis-row">
+      <div class="column is-4"><div class="hyp-card"><span class="hyp-tag">H1</span>
+        Our conformal prediction sets are <b>less conservative</b> than the ISO&nbsp;13855 model.</div></div>
+      <div class="column is-4"><div class="hyp-card"><span class="hyp-tag">H2</span>
+        Under our simulated test distribution the system achieves
+        PFH<sub>D</sub>&nbsp;&lt;&nbsp;10<sup>&minus;6</sup>.</div></div>
+      <div class="column is-4"><div class="hyp-card"><span class="hyp-tag">H3</span>
+        OOD handling <b>reduces invalid predictions</b> at a small accuracy cost.</div></div>
+    </div>
+
+    <!-- ---------- H1 ---------- -->
+    <h3 class="title is-4" id="h1">H1 &middot; How tight are the sets?</h3>
+    <div class="columns is-vcentered">
+      <div class="column is-half">
+        <figure class="scene-figure">
+          <video class="scene" data-src="./static/videos/clip_iso.mp4"
+                 loop muted playsinline preload="none"></video>
+          <figcaption class="caption">
+            Both sets cover the ground truth at 400&nbsp;ms. Orange: SaRA with the ISO&nbsp;13855
+            constant-velocity model. Blue: our conformal prediction sets.
+          </figcaption>
+        </figure>
+      </div>
+      <div class="column is-half">
         <div class="content">
-          <p class="has-text-centered">
-            We evaluate on the <b>Human3.6M</b> benchmark and a real-world Franka Emika HRC setup, testing three
-            hypotheses: our conformal sets are less conservative than the ISO&nbsp;13855 velocity model at equal
-            coverage (<b>H1</b>); the full system reaches PFH<sub>D</sub>&nbsp;&lt;&nbsp;10<sup>&minus;6</sup>,
-            i.e. PL&nbsp;d (<b>H2</b>); and OOD handling reduces invalid predictions at a small accuracy cost
-            (<b>H3</b>).
+          <p>
+            We compare against the <b>SaRA</b> tool with the ISO&nbsp;13855 constant-velocity model
+            (<i>v</i><sub><i>h</i>,max</sub>&nbsp;=&nbsp;2.0&nbsp;m/s), calibrated to the same
+            99.99&nbsp;% confidence on the last observed pose. At matched coverage our sets have a
+            <b>7.6&times; smaller median volume</b> (0.090&nbsp;m<sup>3</sup> vs.
+            0.686&nbsp;m<sup>3</sup>), confirming&nbsp;<b>H1</b>. 
+          </p>
+          <p>
+            There is a clear trade-off between the predicted set size and the observed miss-rate. Dropping conformal calibration for the analytic
+            Gaussian value <i>&alpha;<sub>k,&chi;</sub><sup>j</sup></i>&nbsp;=&nbsp;&radic;<span class="rad">&chi;<sup>2</sup><sub>3</sub>(1&minus;&epsilon;)</span>
+            gives by far the smallest sets, but it fails PFH<sub>D</sub>&nbsp;&lt;&nbsp;10<sup>&minus;6</sup> by four orders of magnitude. 
+            A single shared threshold <i>&alpha;</i><sub>max</sub> has the lowest miss-rate, but 4.6&times; larger sets than our individual scores.
           </p>
         </div>
+      </div>
+    </div>
 
-        <!-- Table I -->
-        <h3 class="title is-5 has-text-centered">Conformal prediction &amp; certification on Human3.6M</h3>
+    <h4 class="title is-6 has-text-centered">Table&nbsp;I &middot; Motion prediction evaluation and certification simulation on H36M test data</h4>
+    <div class="table-container">
+      <table class="table is-fullwidth is-hoverable results-table">
+        <thead>
+          <tr>
+            <th rowspan="2">Method</th>
+            <th colspan="2">Coverage</th>
+            <th colspan="3">&darr;&nbsp;Volume (m<sup>3</sup>)</th>
+            <th rowspan="2">&darr;&nbsp;<i>P</i>(<i>F</i>)</th>
+            <th rowspan="2">&darr;&nbsp;<i>k<sub>D</sub></i></th>
+            <th rowspan="2" class="nb">&darr;&nbsp;PFH<sub>D</sub> (1/h)</th>
+          </tr>
+          <tr>
+            <th>&darr;&nbsp;Miss rate</th>
+            <th>&uarr;&nbsp;Nines of reliability</th>
+            <th>5&nbsp;%</th>
+            <th>50&nbsp;%</th>
+            <th>95&nbsp;%</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ISO&nbsp;13855</td>
+            <td>5.0&times;10<sup>&minus;6</sup></td><td>5.30</td>
+            <td>0.017</td><td>0.686</td><td>3.244</td>
+            <td>2.87&times;10<sup>&minus;3</sup></td><td><b>0</b></td>
+            <td>1.62&times;10<sup>&minus;7</sup></td>
+          </tr>
+          <tr>
+            <td>Ours (<i>&alpha;</i><sub>max</sub>)</td>
+            <td><b>1.0&times;10<sup>&minus;6</sup></b></td><td><b>6.00</b></td>
+            <td>0.072</td><td>0.413</td><td>6.352</td>
+            <td><b>4.62&times;10<sup>&minus;4</sup></b></td><td><b>0</b></td>
+            <td><b>1.91&times;10<sup>&minus;8</sup></b></td>
+          </tr>
+          <tr>
+            <td>Ours with OOD inputs</td>
+            <td>1.6&times;10<sup>&minus;4</sup></td><td>3.79</td>
+            <td>0.015</td><td>0.090</td><td>0.654</td>
+            <td>1.30&times;10<sup>&minus;2</sup></td><td>4</td>
+            <td>9.48&times;10<sup>&minus;7</sup></td>
+          </tr>
+          <tr class="highlight-row">
+            <td><b>Ours OOD filtered</b></td>
+            <td>1.6&times;10<sup>&minus;4</sup></td><td>3.79</td>
+            <td><b>0.015</b></td><td><b>0.090</b></td><td><b>0.651</b></td>
+            <td>1.30&times;10<sup>&minus;2</sup></td><td>4</td>
+            <td>9.50&times;10<sup>&minus;7</sup></td>
+          </tr>
+          <tr class="rule-above">
+            <td>No conformal prediction (<i>&alpha;<sub>k,&chi;</sub><sup>j</sup></i>)</td>
+            <td>6.8&times;10<sup>&minus;3</sup></td><td>2.17</td>
+            <td>0.002</td><td>0.011</td><td>0.174</td>
+            <td>1.80&times;10<sup>&minus;1</sup></td><td>24,722</td>
+            <td class="fail">1.61&times;10<sup>&minus;2</sup></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">
+      Motion prediction results on H36M test data, and the PFH<sub>D</sub> evaluation over
+      <i>N<sub>D</sub></i>&nbsp;=&nbsp;<span class="nb">2.65&times;10<sup>11</sup></span> random
+      placement experiments. Miss rate is the rate at which a ground-truth joint position falls
+      outside its predicted set; the nines of reliability are
+      <i>k</i>&nbsp;=&nbsp;&minus;log<sub>10</sub>(<i>p</i><sub>miss</sub>). <i>P</i>(<i>F</i>) is the
+      per-window prediction-failure rate, and <i>k<sub>D</sub></i> the number of placements that ended
+      in contact <i>although</i> the shield had verified the trajectory. The last row drops conformal
+      calibration for the analytic Gaussian value, and is the only variant that misses
+      PFH<sub>D</sub>&nbsp;&lt;&nbsp;10<sup>&minus;6</sup>. PFH<sub>D</sub> is a bound under the
+      simulated test distribution — not a certified PL.
+    </p>
+
+    <!-- ---------- H2 ---------- -->
+    <h3 class="title is-4" id="h2">H2 &middot; Bounding the probability of a dangerous failure</h3>
+    <div class="columns is-vcentered">
+      <div class="column is-half">
+        <div class="content">
+          <p>
+            A dangerous failure <i>D</i> requires both a prediction failure <i>F</i> and an actual
+            contact, so <i>D</i>&nbsp;&rArr;&nbsp;<i>F</i> and
+            PFH<sub>D</sub>&nbsp;=&nbsp;<i>N<sub>h</sub></i>&nbsp;<i>P</i>(<i>F</i>)&nbsp;<i>P</i>(<i>D</i>&nbsp;|&nbsp;<i>F</i>),
+            with <i>N<sub>h</sub></i>&nbsp;=&nbsp;3600&nbsp;s&nbsp;/&nbsp;<i>t</i><sub>cycle</sub>&nbsp;=&nbsp;9&times;10<sup>5</sup>
+            verification cycles per hour at <i>t</i><sub>cycle</sub>&nbsp;=&nbsp;4&nbsp;ms.
+          </p>
+          <p>
+            We measure <i>P</i>(<i>F</i>) on the H36M test windows, correcting the effective sample
+            size for the autocorrelation induced by overlapping windows. We then <b>replay every failed
+            prediction</b> at <b class="nb">2.65&times;10<sup>11</sup></b> random positions, orientations and
+            robot-trajectory phases inside a 10&nbsp;m radius — a distribution in which the human
+            spends 2.3&nbsp;minutes per operating hour in the robot's path. Almost no placement can
+            physically reach the robot, so a hierarchy of bounding-sphere filters prunes them before
+            the remaining capsule intersections are batched on the GPU.
+          </p>
+          <p>
+            Exactly <b>four</b> placements ended in contact despite a verified trajectory. Composing
+            two one-sided Clopper-Pearson bounds gives
+            PFH<sub>D</sub>&nbsp;&le;&nbsp;<b class="nb">9.50&times;10<sup>&minus;7</sup>&nbsp;h<sup>&minus;1</sup></b>
+            at <b>99.999&nbsp;%</b> confidence — inside the PL&nbsp;d band, confirming&nbsp;<b>H2</b>.
+          </p>
+        </div>
+      </div>
+      <div class="column is-half">
+        <figure class="scene-figure">
+          <video class="scene" data-src="./static/videos/clip_sim.mp4"
+                 loop muted playsinline preload="none"></video>
+        </figure>
+        <figure class="scene-figure" style="margin-top: 1rem;">
+          <video class="scene" data-src="./static/videos/clip_pfhd.mp4"
+                 loop muted playsinline preload="none"></video>
+        </figure>
+      </div>
+    </div>
+
+    <article class="message caveat">
+      <div class="message-body">
+        <b>What this does and does not claim.</b> A bounded PFH<sub>D</sub> is <i>necessary but not
+        sufficient</i> for a performance level. ISO&nbsp;13849-1 additionally requires a control
+        architecture of a defined category, sufficient diagnostic coverage, protection against
+        common-cause failures, and measures against systematic and software faults. Our pipeline is
+        single-channel with no hardware redundancy, so it cannot on its own satisfy a fault-tolerant
+        category such as Category&nbsp;3. <b>We therefore do not claim a certified PL</b> and leave
+        the architectural certification of the integrated system to the system integrator.
+      </div>
+    </article>
+
+    <!-- ---------- H3 ---------- -->
+    <h3 class="title is-4" id="h3">H3 &middot; Does the OOD handling pay for itself?</h3>
+    <div class="content">
+      <p>
+        We run the full pipeline on H36M while varying <i>N</i><sub>req</sub>, the number of
+        consecutive valid observations required before the buffer fallback releases.
+        <i>N</i><sub>req</sub>&nbsp;=&nbsp;<i>K<sub>I</sub></i>&nbsp;=&nbsp;50 is the degenerate case
+        where any single OOD input invalidates the whole motion prediction; we use
+        <i>N</i><sub>req</sub>&nbsp;=&nbsp;3 in the real-world experiments. Going from 50 to 3
+        <b>reduces invalid pose buffers by 24&nbsp;%</b> while raising the average MPJPE by only
+        <b>1.9&nbsp;%</b>, supporting&nbsp;<b>H3</b>.
+      </p>
+      <p>
+        The monitors themselves separate cleanly: SLU<sub>2D</sub> reaches an <b>AUROC of
+        0.9976</b> against the tiger-pose dataset, and SLU<sub>mot</sub> <b>0.9858</b> against
+        temporally shuffled inputs.
+      </p>
+    </div>
+
+    <div class="columns">
+      <div class="column is-half">
+        <h4 class="title is-6 has-text-centered">Table&nbsp;III &middot; Full pipeline on H36M vs. <i>N</i><sub>req</sub></h4>
         <div class="table-container">
           <table class="table is-fullwidth is-hoverable results-table">
             <thead>
               <tr>
-                <th>Method</th>
-                <th>Miss-rate&nbsp;&darr;</th>
-                <th>9s of reliability&nbsp;&uarr;</th>
-                <th>Median volume (m<sup>3</sup>)&nbsp;&darr;</th>
-                <th>PFH<sub>D</sub> (1/h)&nbsp;&darr;</th>
-                <th>PL</th>
+                <th><i>N</i><sub>req</sub></th>
+                <th>&darr;&nbsp;<i>H</i> invalid&nbsp;[%]</th>
+                <th>&uarr;&nbsp;Motion valid&nbsp;[%]</th>
+                <th>&darr;&nbsp;MPJPE&nbsp;[mm]</th>
               </tr>
             </thead>
             <tbody>
+              <tr class="highlight-row"><td><b>3 (ours)</b></td><td><b>12.63</b></td><td><b>74.74</b></td><td>55.15</td></tr>
+              <tr><td>5</td><td>13.52</td><td>73.62</td><td>55.03</td></tr>
+              <tr><td>10</td><td>14.05</td><td>72.67</td><td>54.74</td></tr>
+              <tr><td>50</td><td>16.57</td><td>68.70</td><td><b>54.14</b></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="column is-half">
+        <h4 class="title is-6 has-text-centered">Per-stage runtime (450 steps, RTX&nbsp;5090)</h4>
+        <div class="table-container">
+          <table class="table is-fullwidth is-hoverable results-table">
+            <thead>
+              <tr><th>Stage</th><th>Mean&nbsp;[ms]</th><th>Median&nbsp;[ms]</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>2D pose estimation <i>f</i><sub>2D</sub></td><td>13.40&nbsp;&plusmn;&nbsp;0.62</td><td>13.20</td></tr>
+              <tr><td>Pose OOD detection SLU<sub>2D</sub></td><td>36.48&nbsp;&plusmn;&nbsp;0.21</td><td>36.39</td></tr>
+              <tr><td>Triangulation</td><td>1.90&nbsp;&plusmn;&nbsp;0.14</td><td>1.87</td></tr>
+              <tr><td>Motion prediction <i>f</i><sub>mot</sub></td><td>4.69&nbsp;&plusmn;&nbsp;0.04</td><td>4.69</td></tr>
+              <tr><td>Motion OOD detection SLU<sub>mot</sub></td><td>9.08&nbsp;&plusmn;&nbsp;0.09</td><td>9.08</td></tr>
+              <tr><td>Prediction-set computation</td><td>0.67&nbsp;&plusmn;&nbsp;0.10</td><td>0.64</td></tr>
+              <tr class="highlight-row"><td><b>Total</b></td><td><b>66.22</b></td><td><b>65.86</b></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="caption">
+          The 2D stage includes human detection and both camera views. OOD detection dominates the
+          budget. Measured on an RTX&nbsp;5090 with an AMD Ryzen&nbsp;9&nbsp;9950X, as reported in
+          Sec.&nbsp;IV-D of the paper.
+        </p>
+      </div>
+    </div>
+
+    <!-- ---------- accuracy ---------- -->
+    <div class="columns is-centered">
+      <div class="column is-two-thirds">
+        <h4 class="title is-6 has-text-centered">Table&nbsp;II &middot; Motion prediction accuracy on H36M (MPJPE, mm)</h4>
+        <div class="table-container">
+          <table class="table is-fullwidth is-hoverable results-table">
+            <thead>
               <tr>
-                <td>ISO&nbsp;13855</td>
-                <td>8.1&times;10<sup>&minus;4</sup></td>
-                <td>3.09</td>
-                <td>0.687</td>
-                <td>1.49&times;10<sup>&minus;1</sup></td>
-                <td>none</td>
+                <th>Method</th><th>80&nbsp;ms</th><th>160&nbsp;ms</th><th>320&nbsp;ms</th><th>400&nbsp;ms</th>
               </tr>
-              <tr>
-                <td>Ours (with OOD inputs)</td>
-                <td>2.1&times;10<sup>&minus;4</sup></td>
-                <td>3.67</td>
-                <td>0.091</td>
-                <td>6.27&times;10<sup>&minus;7</sup></td>
-                <td>d</td>
-              </tr>
-              <tr class="highlight-row">
-                <td><b>Ours (OOD filtered)</b></td>
-                <td><b>1.6&times;10<sup>&minus;4</sup></b></td>
-                <td><b>3.80</b></td>
-                <td><b>0.088</b></td>
-                <td><b>4.14&times;10<sup>&minus;7</sup></b></td>
-                <td><b>d</b></td>
-              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Repeating Last-Frame</td><td>23.8</td><td>44.4</td><td>76.1</td><td>88.2</td></tr>
+              <tr><td>One FC</td><td>14.0</td><td>33.2</td><td>68.0</td><td>81.5</td></tr>
+              <tr><td>HisRep</td><td>10.4</td><td>22.6</td><td>47.1</td><td>58.3</td></tr>
+              <tr><td>ST-DGCN</td><td>10.3</td><td>22.7</td><td>47.4</td><td>58.5</td></tr>
+              <tr><td>ST-Trans</td><td>10.4</td><td>23.4</td><td>48.4</td><td>59.2</td></tr>
+              <tr><td>SiMLPe</td><td><b>9.6</b></td><td><b>21.7</b></td><td><b>46.3</b></td><td><b>57.3</b></td></tr>
+              <tr><td>Ours (stage&nbsp;1)</td><td>16.5</td><td>23.1</td><td>48.4</td><td>62.4</td></tr>
+              <tr class="highlight-row"><td><b>Ours (final)</b></td><td>22.0</td><td>30.7</td><td>56.1</td><td>69.4</td></tr>
             </tbody>
           </table>
         </div>
         <p class="caption has-text-centered">
-          At an equal coverage level, our conformal sets are <b>8&times; smaller in median volume</b> and have a
-          <b>5&times; smaller miss-rate</b> than the ISO&nbsp;13855 constant-velocity model, while achieving a
-          PFH<sub>D</sub> low enough for <b>PL&nbsp;d</b> (H1, H2).
+          Our model is less accurate than the state of the art, most likely because it predicts
+          13&nbsp;joints rather than the 22 these baselines report on. For certifiable HRC the
+          calibrated set is what the shield consumes; raw MPJPE is not.
         </p>
-
-        <br>
-
-        <!-- Table II -->
-        <div class="columns is-centered">
-          <div class="column is-two-thirds">
-            <h3 class="title is-5 has-text-centered">Motion prediction accuracy (MPJPE, mm)</h3>
-            <div class="table-container">
-              <table class="table is-fullwidth is-hoverable results-table">
-                <thead>
-                  <tr>
-                    <th>Method</th>
-                    <th>80&nbsp;ms</th>
-                    <th>160&nbsp;ms</th>
-                    <th>320&nbsp;ms</th>
-                    <th>400&nbsp;ms</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><td>Repeating Last-Frame</td><td>23.8</td><td>44.4</td><td>76.1</td><td>88.2</td></tr>
-                  <tr><td>HisRep</td><td>10.4</td><td>22.6</td><td>47.1</td><td>58.3</td></tr>
-                  <tr><td>ST-Trans</td><td>10.4</td><td>23.4</td><td>48.4</td><td>59.2</td></tr>
-                  <tr><td>SiMLPe</td><td>9.6</td><td>21.7</td><td>46.3</td><td>57.3</td></tr>
-                  <tr><td>Ours (stage&nbsp;1)</td><td>16.5</td><td>23.1</td><td>48.4</td><td>62.4</td></tr>
-                  <tr><td>Ours (final, w/ uncertainty)</td><td>22.0</td><td>30.7</td><td>56.1</td><td>69.4</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <p class="caption has-text-centered">
-              For safety-critical HRC, high statistical certainty matters more than raw accuracy: our
-              uncertainty-aware model trades a few&nbsp;mm of MPJPE for calibrated, certifiable prediction sets.
-            </p>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -375,20 +640,23 @@
         <h2 class="title is-3 has-text-centered">Real-World Deployment</h2>
         <div class="content has-text-justified">
           <p>
-            We integrated the pipeline into SARA&nbsp;shield and deployed it in a real-world HRC setting on a
-            <b>Franka Emika</b> robot, using an <b>Intel RealSense 435i</b> camera for perception and depth. We
-            mark all 3D poses whose depth differs by more than 0.8&nbsp;m from the median depth as
-            out-of-distribution, so the OOD monitor catches perception failures directly. In every tested
-            instance, the robot came to a complete stop before the human operator could reach it. Our OOD
-            handling reduces interruptions by <b>23.8&nbsp;%</b> compared to naively rejecting every uncertain
-            input, at a cost of only <b>1.9&nbsp;%</b> higher MPJPE (H3).
+            We integrated the pipeline into SARA&nbsp;shield and deployed it on a <b>Franka&nbsp;Emika</b>
+            arm with an <b>Intel&nbsp;RealSense&nbsp;435i</b> running at 25&nbsp;Hz. Depth comes straight
+            from the camera, and every 3D pose whose depth deviates by more than 0.8&nbsp;m from the
+            median depth is marked out-of-distribution — so the OOD monitor catches perception failures
+            directly. In <b>every tested instance the robot came to a complete stop</b> before the human
+            operator could reach it.
           </p>
         </div>
-        <div class="publication-video">
-          <iframe src="https://www.youtube.com/embed/oeN8RgwpzhE?rel=0"
-                  frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
-                  allowfullscreen></iframe>
-        </div>
+        <figure class="scene-figure">
+          <video class="scene" data-src="./static/videos/clip_realworld.mp4"
+                 loop muted playsinline preload="none"></video>
+          <figcaption class="caption has-text-centered">
+            Blue: the human's conformal prediction sets over the robot's stopping horizon. When they
+            intersect the robot's reachable set, the shield brakes. Also available as a standalone clip
+            on <a href="https://youtu.be/oeN8RgwpzhE" target="_blank">YouTube</a>.
+          </figcaption>
+        </figure>
       </div>
     </div>
   </div>

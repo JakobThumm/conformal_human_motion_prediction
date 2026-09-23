@@ -70,11 +70,6 @@ body {
   height: 100%;
 }
 
-.hero.teaser .subtitle {
-  margin-top: 1.25rem;
-  color: #555;
-}
-
 /* ---------- captions ---------- */
 .caption {
   color: #555;
@@ -155,4 +150,146 @@ body {
 
 .footer a {
   color: #3b82f6;
+}
+
+/* ==================================================================== */
+/* ===============  supplementary-video integration  ================== */
+/* ==================================================================== */
+
+/* ---------- inline scenes cut from the film ---------- */
+.scene-figure {
+  margin: 0;
+}
+
+.scene {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  /* matches style.BG in the film, so a not-yet-loaded clip is not a white hole */
+  background-color: #0e1117;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.16);
+}
+
+.scene-figure .caption {
+  margin-top: 0.6rem;
+  font-size: 0.88rem;
+}
+
+/* ---------- method step rows ---------- */
+.step-row {
+  margin-top: 2.5rem;
+  padding-top: 2rem;
+  border-top: 1px solid #ebebeb;
+}
+
+@media screen and (min-width: 769px) {
+  .is-flex-direction-row-reverse-desktop {
+    flex-direction: row-reverse;
+  }
+}
+
+/* ---------- tinted section ---------- */
+.section-tinted {
+  background-color: #f5f9fd;
+}
+
+/* ---------- hypothesis cards ---------- */
+.hypothesis-row {
+  margin-bottom: 1.5rem;
+}
+
+.hyp-card {
+  height: 100%;
+  padding: 1rem 1.1rem;
+  background-color: #fff;
+  border-radius: 8px;
+  border-left: 4px solid #3b82f6;
+  font-size: 0.95rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.hyp-tag {
+  display: inline-block;
+  margin-right: 0.45rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 4px;
+  background-color: #3b82f6;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+/* ---------- scope caveat ---------- */
+.caveat {
+  margin-top: 1.5rem;
+  margin-bottom: 2.5rem;
+  font-size: 0.93rem;
+}
+
+/* ---------- square-root overbar, for the inline math ---------- */
+.rad {
+  border-top: 1px solid currentColor;
+  padding: 0 0.12em;
+  margin-left: -0.08em;
+}
+
+/* ---------- wider result tables ---------- */
+.results-table {
+  font-size: 0.9rem;
+  background-color: transparent;
+}
+
+.results-table thead th {
+  border-color: #3b82f6;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.section-tinted .results-table tbody tr {
+  background-color: #fff;
+}
+
+.section-tinted .results-table tr.highlight-row {
+  background-color: #e8f4fc;
+}
+
+h4.title.is-6 {
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+/* ---------- results sub-headings need air after a table caption ---------- */
+.section-tinted h3.title.is-4 {
+  margin-top: 3.5rem;
+  margin-bottom: 1.5rem;
+}
+
+/* ---------- never break a number across lines ---------- */
+.nb {
+  white-space: nowrap;
+}
+
+/* ---------- scope caveat: a note, not a warning ---------- */
+.message.caveat {
+  background-color: #fff;
+  border-left: 4px solid #94a3b8;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.message.caveat .message-body {
+  border: 0;
+  color: #444;
+  background-color: transparent;
+}
+
+/* ---------- Table I: the ablation below the rule, and the value that fails ---------- */
+.results-table tr.rule-above td {
+  border-top: 2px solid #b9c6d4;
+}
+
+.results-table td.fail {
+  color: #d64545;
+  font-weight: 600;
 }
