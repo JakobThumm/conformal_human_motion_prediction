@@ -1,0 +1,52 @@
+Vision-Based Safe Human-Robot Collaboration -- ICRA submission video
+====================================================================
+
+icra_video.mp4            174.7 s | 17.6 MB | 1920x1080 | 30 fps progressive | H.264
+icra_video_subtitled.mp4  same, with burned-in subtitles
+narration.srt / .vtt      sidecar subtitles      narration_script.md  spoken script + timecodes
+
+WHAT IT SHOWS
+-------------
+A camera-only pipeline that predicts human motion with conformal prediction sets, feeds
+them into the SARA safety shield, and bounds the probability of a dangerous failure per
+hour. Every figure is real output from this repository -- real model predictions, the real
+calibration set, the real large-scale shield simulation, and the real lab deployment.
+
+  0:00  The goal        Deployment footage: the robot is already stopped when the operator's
+                        hand lands on it. Goal: from camera input alone, guarantee a complete
+                        stop before contact is possible.
+  0:08  The requirement Failure (the truth leaves the predicted set) vs dangerous failure
+                        (failure AND the robot touches the human). ISO 13849-1 asks for
+                        < 1e-6 dangerous failures per hour = one in 114 years of non-stop work.
+
+  -- Method ---------------------------------------------------------------------------
+  0:23  Perception      Two camera views; adapted YOLO26 returns a covariance per joint,
+  0:30                  and uncertainty-aware triangulation lifts pose + covariance to 3-D.
+  0:39  Motion pred.    A transformer reads K_I = 50 poses (2 s) and predicts K_P = 10
+                        (400 ms), each joint with its own covariance.
+  0:51  Conformal sets  A learned covariance is a guess. Calibrate: score the held-out
+                        residual in units of predicted sigma, take the 99.99th percentile
+                        alpha_k^j, inflate every sphere. (left knee, +120 ms: alpha = 5.46)
+  1:16  Verification    The spheres become capsules; SARA shield intersects them with the
+                        robot's reachable occupancy. Disjoint -> verified safe, else stop.
+  1:30  OOD monitor     A sketched-Lanczos score separates in- from out-of-distribution
+                        (AUROC 0.992, tau_2D = 0.07); OOD inputs reuse the prior prediction.
+
+  -- Results --------------------------------------------------------------------------
+  1:42  Set size        vs the ISO 13855 constant-velocity model in SaRA: same 99.99 %
+                        confidence, median volume 0.686 -> 0.090 m^3, 7.6x smaller.
+  1:52  PFH_D sim.      All 434 prediction failures replayed at random positions, yaws and
+  2:04                  trajectory phases in a 10 m circle; two geometric filters cull the
+                        placements that provably cannot touch; 2.65e11 checked on one GPU.
+  2:14  The bound       4 placements ended in contact although the shield had verified.
+                        Clopper-Pearson on both factors: PFH_D <= 9.50e-7 /h at 99.999 %
+                        confidence -- inside the PL d band, necessary but not sufficient.
+  2:28  Deployment      Franka Emika + Intel RealSense D435i at 25 Hz. The human's conformal
+                        occupancy in blue; when it meets the robot's reachable set the shield
+                        brakes. In every tested instance the robot stopped in time.
+  2:49  Summary
+
+REBUILD
+-------
+  /home/thumm/miniconda3/envs/chmp-video/bin/python video/build.py all
+  (see video/README.md; storyboard and narration live in video/script.py)

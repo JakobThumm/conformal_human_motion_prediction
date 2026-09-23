@@ -47,3 +47,5 @@ marian_code/
 scripts/upload_models.py
 
 Vision-Based-Safe-Human-Robot-Collaboration/
+# Third-party checkouts (human-robot-gym); clone them, do not vendor them
+/external/

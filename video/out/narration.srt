@@ -1,0 +1,173 @@
+1
+00:00:00,000 --> 00:00:04,416
+Our goal: from camera input alone, guarantee
+the robot is always at a complete stop
+
+2
+00:00:04,416 --> 00:00:06,118
+before it could touch the human.
+
+3
+00:00:08,500 --> 00:00:12,920
+Cameras drop frames. Predictions go wrong.
+That is a failure. It turns dangerous
+
+4
+00:00:12,920 --> 00:00:17,451
+only if the robot then touches the person.
+Standards cap dangerous failures at one
+
+5
+00:00:17,451 --> 00:00:21,817
+per million hours: one in a hundred and
+fourteen years of round-the-clock work.
+
+6
+00:00:23,000 --> 00:00:27,912
+It starts with two views. An adapted YOLO
+twenty-six returns, for every joint, not a
+
+7
+00:00:27,912 --> 00:00:29,316
+pixel, but a covariance.
+
+8
+00:00:30,300 --> 00:00:34,824
+Uncertainty-aware triangulation lifts
+pose and covariance into three dimensions.
+
+9
+00:00:34,824 --> 00:00:36,860
+Every joint arrives as an ellipsoid.
+
+10
+00:00:39,300 --> 00:00:43,659
+A transformer reads two seconds of this
+uncertain history, and predicts the next
+
+11
+00:00:43,659 --> 00:00:46,057
+four hundred milliseconds, with covariances.
+
+12
+00:00:50,800 --> 00:00:55,937
+But a learned covariance is a guess, not
+a guarantee. So we calibrate: on held-out
+
+13
+00:00:55,937 --> 00:01:01,011
+data we measure how far the truth lands,
+in units of predicted sigma. Its 99.99th
+
+14
+00:01:01,011 --> 00:01:06,274
+percentile scales every sphere into a
+conformal prediction set: a ball that contains
+
+15
+00:01:06,274 --> 00:01:09,155
+the true joint with 99.99
+percent probability.
+
+16
+00:01:15,800 --> 00:01:20,816
+The spheres become capsules: the human's
+reachable occupancy. SARA shield intersects
+
+17
+00:01:20,816 --> 00:01:24,995
+them with the robot's. No intersection,
+go. Otherwise, fail-safe stop.
+
+18
+00:01:30,500 --> 00:01:34,470
+Conformal guarantees assume tomorrow
+looks like yesterday. A sketched-Lanczos
+
+19
+00:01:34,470 --> 00:01:38,492
+monitor watches the networks' gradients,
+and out of distribution, we reuse the
+
+20
+00:01:38,492 --> 00:01:40,554
+previous prediction instead of guessing.
+
+21
+00:01:42,500 --> 00:01:47,415
+Orange is the constant-velocity model of
+ISO thirteen eight fifty-five. Blue is
+
+22
+00:01:47,415 --> 00:01:51,335
+ours: the same confidence, in
+seven point six times less space.
+
+23
+00:01:51,835 --> 00:01:56,496
+Smaller is only worth having if it stays
+safe. So we take every prediction failure
+
+24
+00:01:56,496 --> 00:02:00,588
+and drop it around the robot: random
+place in a ten-meter circle, random
+
+25
+00:02:00,588 --> 00:02:03,828
+orientation, random phase of
+a pick-and-place trajectory.
+
+26
+00:02:04,335 --> 00:02:09,117
+Almost none of those placements can reach
+the robot; two geometric filters prove it.
+
+27
+00:02:09,117 --> 00:02:13,159
+In total we check two hundred sixty-five
+billion placements on the GPU.
+
+28
+00:02:13,659 --> 00:02:18,250
+Four of those placements ended in contact
+although the shield had verified the
+
+29
+00:02:18,250 --> 00:02:22,959
+trajectory. Clopper-Pearson on both factors
+bounds the dangerous failure rate at
+
+30
+00:02:22,959 --> 00:02:27,315
+nine point five times ten to the minus
+seven per hour, with 99.999 percent
+
+31
+00:02:27,315 --> 00:02:27,962
+confidence.
+
+32
+00:02:28,462 --> 00:02:32,754
+On hardware: a Franka arm, a RealSense
+camera, the same pipeline at twenty-five
+
+33
+00:02:32,754 --> 00:02:37,155
+hertz. Blue is the human's conformal
+occupancy over the robot's stopping horizon.
+
+34
+00:02:37,155 --> 00:02:41,719
+When it meets the robot's reachable set,
+the shield brakes. In every tested instance
+
+35
+00:02:41,719 --> 00:02:45,087
+the robot stood still long before
+the operator could reach it.
+
+36
+00:02:49,462 --> 00:02:52,620
+Vision-based perception, with a
+number you can certify against.

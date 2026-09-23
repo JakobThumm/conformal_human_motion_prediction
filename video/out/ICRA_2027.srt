@@ -1,0 +1,206 @@
+1
+00:00:00,000 --> 00:00:02,040
+In this work, we present
+how to guarantee human
+
+2
+00:00:02,080 --> 00:00:04,920
+safety in human-robot
+collaboration from camera images.
+
+3
+00:00:08,000 --> 00:00:10,460
+If our prediction is wrong,
+we speak of a failure.
+
+4
+00:00:10,580 --> 00:00:12,180
+This failure is dangerous if the robot
+
+5
+00:00:12,220 --> 00:00:14,340
+would actually touch the
+human in this instance.
+
+6
+00:00:14,500 --> 00:00:17,300
+The ISO standard requires safety
+systems to have a probably
+
+7
+00:00:17,340 --> 00:00:20,260
+of dangerous failures per hour
+of less than one in a million,
+
+8
+00:00:20,340 --> 00:00:23,680
+which is at most one dangerous
+failure every 114 years.
+
+9
+00:00:23,720 --> 00:00:25,680
+To achieve this,
+we propose the following system.
+
+10
+00:00:25,720 --> 00:00:30,780
+First, our 2D pose estimation predicts the
+joint positions and covariance matrices.
+
+11
+00:00:31,080 --> 00:00:33,180
+Our uncertainty-aware triangulation lifts the
+
+12
+00:00:33,220 --> 00:00:35,720
+poses and covariances into three dimensions.
+
+13
+00:00:39,680 --> 00:00:44,060
+We then input two seconds of pose
+history in our motion prediction transformer
+
+14
+00:00:44,100 --> 00:00:48,420
+to predict the future poses and their
+covariances in the next 400 milliseconds.
+
+15
+00:00:50,680 --> 00:00:53,320
+To establish strong probabilistic guarantees,
+
+16
+00:00:53,420 --> 00:00:54,840
+we use conformal calibration:
+
+17
+00:00:54,880 --> 00:00:59,220
+We set the score threshold to
+the 99.99th percentile that
+
+18
+00:00:59,260 --> 00:01:03,100
+scales every covariance matrix
+into a conformal prediction set.
+
+19
+00:01:15,800 --> 00:01:19,620
+The spheres now become capsules,
+which define the human's reachable occupancy.
+
+20
+00:01:19,980 --> 00:01:23,300
+SARA shield intersects them with
+the robot's reachable occupancy.
+
+21
+00:01:23,340 --> 00:01:26,700
+If there is no intersection,
+we execute the trajectory.
+
+22
+00:01:26,980 --> 00:01:28,540
+Otherwise, a failsafe stop.
+
+23
+00:01:30,580 --> 00:01:33,860
+To handle rare OOD inputs,
+we detect them with gradient-based
+
+24
+00:01:33,900 --> 00:01:37,940
+monitors and reuse the previous
+prediction to resume operation.
+
+25
+00:01:42,220 --> 00:01:46,820
+Our experimental results on the human
+3.6 million dataset show that our
+
+26
+00:01:46,860 --> 00:01:50,880
+reachable occupancies in blue have a
+seven point six times smaller volume
+
+27
+00:01:50,920 --> 00:01:55,700
+than the constant-velocity model of ISO
+thirteen eight fifty-five in orange.
+
+28
+00:01:55,940 --> 00:01:59,520
+To determine the probability of dangerous
+failures per hour of our system,
+
+29
+00:01:59,660 --> 00:02:02,180
+we take every prediction and
+randomly place it within
+
+30
+00:02:02,220 --> 00:02:06,360
+a ten-meter circle around the
+robot 265 billion times.
+
+31
+00:02:09,080 --> 00:02:11,660
+Almost none of those
+placements can reach the robot;
+
+32
+00:02:11,720 --> 00:02:15,540
+hence we pre-filter them and evaluate
+the remaining motions on the GPU.
+
+33
+00:02:17,280 --> 00:02:20,420
+For our system, four of
+those placements ended in
+
+34
+00:02:20,460 --> 00:02:23,300
+contact although the shield
+had verified the trajectory.
+
+35
+00:02:24,340 --> 00:02:25,800
+Using a Clopper-Pearson bound,
+
+36
+00:02:25,980 --> 00:02:31,280
+we can say with 99.999 percent
+confidence that our system has a
+
+37
+00:02:31,320 --> 00:02:35,460
+dangerous failure rate below the required
+1 in a million failures per hour.
+
+38
+00:02:35,660 --> 00:02:38,080
+In our hardware experiments
+we evaluate our pipeline on
+
+39
+00:02:38,120 --> 00:02:41,200
+a Franka arm and a RealSense
+camera at twenty-five hertz.
+
+40
+00:02:41,240 --> 00:02:44,880
+Blue is the human's conformal prediction
+sets over the robot's stopping horizon.
+
+41
+00:02:44,920 --> 00:02:48,260
+When they intersect the robot's
+reachable set, the shield brakes.
+
+42
+00:02:48,300 --> 00:02:50,540
+In every tested instance the robot came to a
+
+43
+00:02:50,580 --> 00:02:52,800
+complete stop before the human could reach it.
+

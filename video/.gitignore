@@ -1,0 +1,15 @@
+# Generated intermediates and renders -- regenerate with `build.py`.
+build/
+out/*
+# ...but keep the small text deliverables: the subtitles and the timed script are the
+# human-readable record of the film, and they are what gets uploaded to YouTube.
+!out/*.srt
+!out/*.vtt
+!out/*.md
+!out/*.txt
+
+# Large inputs and caches, none of them authored here:
+#   media/         source footage + per-shot `--prepare` caches (see README)
+#   assets/voices/ the Piper TTS voice model (~120 MB, downloaded by `build.py fetch`)
+media/
+assets/voices/
